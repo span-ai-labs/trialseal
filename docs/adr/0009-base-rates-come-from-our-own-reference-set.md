@@ -1,0 +1,3 @@
+# Base rates come from our own reference set, not from published studies
+
+The reference-class base rates are estimated from past trials we traced and adjudicated ourselves under the same rules used for scoring, and are frozen at registration. Published rates were the obvious source, but they range from 43% to 69% depending on how each study assembled its sample, and our traced sample of industry-led trials ran 64% positive against 57% in the literature. Using a rate defined differently from the outcome being scored would make the bar either too easy or meaningless. Published figures are reported alongside. The same reference set supplies training labels for the registry-feature model and a test set for readout detection.

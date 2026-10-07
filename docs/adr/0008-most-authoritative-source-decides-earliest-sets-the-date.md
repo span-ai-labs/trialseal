@@ -1,0 +1,3 @@
+# The most authoritative source decides the result; the earliest disclosure sets the date
+
+When sources disagree about a trial, the highest-ranked source available on the analysis date decides whether it was positive: journal paper or regulator document, then conference presentation, then press release or exchange filing, then registry posting. The readout date is still the earliest public disclosure of any rank. Taking the first announcement at face value would be simpler, but in the traced sample one trial was reported as positive at a conference and negative in the later paper, and first announcements rarely carry numbers.

@@ -1,0 +1,3 @@
+# Eligibility is "no public primary result at sealing", not a registry date window
+
+A trial is eligible if it has no public primary result on the day of sealing; the registry completion date only bounds the search. The registry date was the obvious selector, but it slips in both directions and can fall after the readout, so it would both miss trials and admit ones already known. The cost is a manual screen of every candidate for an existing public result before each batch. Forecasts are sealed for all sponsors; the registered primary analysis set is industry-led trials, because their results are disclosed sooner and more reliably.

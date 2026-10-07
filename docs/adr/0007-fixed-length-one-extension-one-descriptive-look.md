@@ -1,0 +1,3 @@
+# The study length is fixed, with one extension and one descriptive look
+
+The final analysis is 18 months after the first sealing. If fewer than 120 industry-led trials have a clear result by then, the study extends once to 24 months; if there are still fewer than 60, it reports an estimate with its uncertainty and makes no claim. A single descriptive look on a fixed date in mid-April 2027 shows scores without testing the registered claim. A traced sample of 70 past trials put the flow at roughly 93 industry readouts a year, so about 40 to 45 will have read out by the look: too few to test, and an early test would weaken the final one. Running until the result looks good was the alternative this rules out.

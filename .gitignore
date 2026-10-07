@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+snapshots/snapshot.log
+# Registry payloads are large (about 24 MB a day); their manifests with hashes are tracked.
+snapshots/*/studies.jsonl.gz
+# Derived from a snapshot by trialforecast-universe; regenerate instead of tracking.
+data/universe/
