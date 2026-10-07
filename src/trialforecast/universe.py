@@ -1,10 +1,12 @@
-"""Build the refined trial universe from a frozen registry snapshot.
+"""Turn a frozen registry snapshot into the study's candidates.
 
 The snapshot is a broad superset (see scripts/snapshot_universe.py). This module
-flattens each record and applies the filters that the pre-build research found to
-work: a time-to-event pattern on the primary-outcome text, and exclusion of
-withdrawn trials. Sponsor class, primary purpose and MeSH tags proved too noisy
-to filter on, so they are kept as columns for hand review, not used as filters.
+flattens each record, keeps trials with a time-to-event primary endpoint that are
+not withdrawn, and gives each candidate what later steps need: its scored
+endpoint, its reference class (sponsor type by endpoint type), the alias record
+its readout may be announced under, and a tag where the design needs review
+before it can be eligible. Primary purpose and MeSH tags proved too noisy to
+filter on, so they are kept as columns for hand review, not used as filters.
 """
 from __future__ import annotations
 
@@ -19,7 +21,8 @@ import pandas as pd
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-# Tuned on two hand-labelled samples in the pre-build research; precision is in-sample.
+# Decides which trials are candidates. Tuned on two hand-labelled samples in the
+# pre-build research; precision is in-sample.
 TTE = re.compile(
     r"surviv|\bPFS\b|\bOS\b|\bDFS\b|\bEFS\b|\bRFS\b|\bMFS\b|\bDMFS\b|\bi?DFS\b|\bTTP\b|\bTTF\b"
     r"|progression[- ]free|free[- ]progression|disease[- ]free|event[- ]free|recurrence[- ]free"
@@ -30,6 +33,21 @@ TTE = re.compile(
     re.I,
 )
 NONINF = re.compile(r"non[- ]?inferior", re.I)
+
+# Endpoint types of a time-to-event measure. Registry text is free-form, so the
+# patterns accept "X-free", "X free" and "X - free", and common misspellings.
+OVERALL_SURVIVAL = re.compile(
+    r"overall[\s-]*survival|(?-i:\bOS\b)|death from any cause|all[- ]cause mortality|time to death", re.I
+)
+PROGRESSION = re.compile(
+    r"\bPFS\b|\bi?DFS\b|\bEFS\b|\bRFS\b|\bD?MFS\b|\bTTP\b"
+    r"|(?:progress\w*|disease|event|recurren\w*|relapse|metasta\w*|failure|leuka?emia|tumou?r|cancer)\s*-?\s*free"
+    r"|free[- ]progression|with ?out (?:progression|recurrence|relapse)"
+    r"|\b(?:progression|recurrence|relapse)\b",
+    re.I,
+)
+QUALIFIED_SURVIVAL = re.compile(r"free|specific", re.I)
+TITLE_TRIAL_NAME = re.compile(r"\(([A-Za-z][\w .\-/]{2,40})\)\s*$")
 
 
 def parse_date(s: str | None) -> dt.date | None:
@@ -46,17 +64,95 @@ def add_months(d: dt.date, months: int) -> dt.date:
     return dt.date(y, m + 1, min(d.day, last))
 
 
+def endpoint_type(measure: str) -> str | None:
+    """Endpoint type of a primary outcome measure, or None if it is not time-to-event.
+
+    A measure naming two types (a composite, or "PFS and OS") takes the one named
+    first. Survival with no qualifier is overall survival; survival qualified in a
+    way we do not recognise is other time-to-event.
+    """
+    if not TTE.search(measure):
+        return None
+    named = []
+    for name, pattern in (("overall_survival", OVERALL_SURVIVAL), ("progression", PROGRESSION)):
+        match = pattern.search(measure)
+        if match:
+            named.append((match.start(), name))
+    if named:
+        return min(named)[1]
+    if "surviv" in measure.lower() and not QUALIFIED_SURVIVAL.search(measure):
+        return "overall_survival"
+    return "other_time_to_event"
+
+
+def scored_endpoint(primary_outcomes: list[dict]) -> tuple[str | None, str | None]:
+    """The first time-to-event primary endpoint listed, with its endpoint type."""
+    for outcome in primary_outcomes:
+        measure = str(outcome.get("measure", ""))
+        its_type = endpoint_type(measure)
+        if its_type:
+            return measure, its_type
+    return None, None
+
+
+def sponsor_type(sponsor_class: str | None) -> str | None:
+    if not sponsor_class or sponsor_class == "UNKNOWN":
+        return None
+    return "industry" if sponsor_class == "INDUSTRY" else "non_industry"
+
+
+def alias_record(study: dict) -> dict:
+    """The names a trial's readout may be announced under, which often differ from the registry's."""
+    ps = study.get("protocolSection", {})
+    ident = ps.get("identificationModule", {})
+    sponsor = ps.get("sponsorCollaboratorsModule", {})
+    interventions = ps.get("armsInterventionsModule", {}).get("interventions", [])
+
+    def distinct(values):
+        return list(dict.fromkeys(v for v in values if v))
+
+    # Announcements usually use a trial name that the registry holds only at the end of the title.
+    # These are unverified: the same position also holds disease abbreviations ("NSCLC").
+    title_names = []
+    for title in (ident.get("briefTitle"), ident.get("officialTitle")):
+        match = TITLE_TRIAL_NAME.search(title or "")
+        if match:
+            title_names.append(match.group(1).strip())
+
+    listed = [n for i in interventions for n in [i.get("name"), *i.get("otherNames", [])] if n]
+    return {
+        "nct": ident.get("nctId"),
+        "acronym": ident.get("acronym"),
+        "title_names": distinct(n for n in title_names if n != ident.get("acronym")),
+        "sponsor_study_id": ident.get("orgStudyIdInfo", {}).get("id"),
+        # Short secondary IDs ("2023") are registry noise and would match anything.
+        "other_ids": distinct(i for s in ident.get("secondaryIdInfos", []) if len(i := s.get("id") or "") >= 5),
+        "intervention_names": distinct(
+            part.strip() for n in listed for part in n.split(";") if "placebo" not in part.lower()
+        ),
+        "lead_sponsor": sponsor.get("leadSponsor", {}).get("name"),
+        "collaborators": distinct(c.get("name") for c in sponsor.get("collaborators", [])),
+    }
+
+
 def flatten(study: dict) -> dict:
     ps = study.get("protocolSection", {})
     ident, status = ps.get("identificationModule", {}), ps.get("statusModule", {})
     sponsor = ps.get("sponsorCollaboratorsModule", {})
     design = ps.get("designModule", {})
     arms = ps.get("armsInterventionsModule", {})
+    description = ps.get("descriptionModule", {})
     prim = ps.get("outcomesModule", {}).get("primaryOutcomes", [])
     docs = study.get("documentSection", {}).get("largeDocumentModule", {}).get("largeDocs", [])
     pcd = status.get("primaryCompletionDateStruct", {})
-    title_text = " ".join(filter(None, [ident.get("briefTitle"), ident.get("officialTitle")]))
     prim_text = " | ".join(str(o.get("measure", "")) for o in prim)
+    design_text = " ".join(
+        filter(None, [ident.get("briefTitle"), ident.get("officialTitle"), description.get("briefSummary"),
+                      description.get("detailedDescription"), prim_text])
+    )
+    scored, scored_type = scored_endpoint(prim)
+    sponsor_class = sponsor.get("leadSponsor", {}).get("class")
+    its_sponsor_type = sponsor_type(sponsor_class)
     return {
         "nct": ident.get("nctId"),
         "acronym": ident.get("acronym"),
@@ -64,7 +160,8 @@ def flatten(study: dict) -> dict:
         "brief_title": ident.get("briefTitle"),
         "status": status.get("overallStatus"),
         "lead_sponsor": sponsor.get("leadSponsor", {}).get("name"),
-        "sponsor_class": sponsor.get("leadSponsor", {}).get("class"),
+        "sponsor_class": sponsor_class,
+        "sponsor_type": its_sponsor_type,
         "collaborators": "; ".join(c.get("name", "") for c in sponsor.get("collaborators", [])),
         "phases": "/".join(design.get("phases", [])),
         "primary_purpose": design.get("designInfo", {}).get("primaryPurpose"),
@@ -85,8 +182,13 @@ def flatten(study: dict) -> dict:
         "primary_outcomes": prim_text,
         "primary_time_frames": " | ".join(str(o.get("timeFrame", "")) for o in prim),
         "n_primary_outcomes": len(prim),
-        "tte_primary": any(TTE.search(str(o.get("measure", ""))) for o in prim),
-        "noninferiority_mention": bool(NONINF.search(title_text + " " + prim_text)),
+        "tte_primary": scored is not None,
+        "scored_endpoint": scored,
+        "endpoint_type": scored_type,
+        "reference_class": f"{its_sponsor_type}/{scored_type}" if its_sponsor_type and scored_type else None,
+        # A mention is enough to queue the trial for review; it is not a finding about the design.
+        "exclusion_review": "non-inferiority mentioned" if NONINF.search(design_text) else None,
+        "aliases": json.dumps(alias_record(study), ensure_ascii=False),
         "has_protocol_doc": any(d.get("hasProtocol") for d in docs),
         "has_sap_doc": any(d.get("hasSap") for d in docs),
     }
@@ -103,7 +205,7 @@ def refine(df: pd.DataFrame, as_of: dt.date) -> pd.DataFrame:
     """Keep time-to-event, non-withdrawn trials and tag them relative to the snapshot date."""
     out = df[df["tte_primary"] & (df["status"] != "WITHDRAWN")].copy()
     pcd = out["primary_completion_date"].map(parse_date)
-    out["industry"] = out["sponsor_class"] == "INDUSTRY"
+    out["industry"] = out["sponsor_type"] == "industry"
     out["multi_primary"] = out["n_primary_outcomes"] > 1
     out["pcd_in_past"] = pcd.map(lambda d: d is not None and d <= as_of)
     out["stale_estimate"] = out["pcd_in_past"] & (out["primary_completion_type"] == "ESTIMATED")
@@ -127,7 +229,7 @@ def summarise(u: pd.DataFrame) -> pd.DataFrame:
                 "industry_multi_primary": int(ind["multi_primary"].sum()),
                 "industry_has_results": int(ind["has_results"].sum()),
                 "industry_stale_estimate": int(ind["stale_estimate"].sum()),
-                "industry_noninferiority_mention": int(ind["noninferiority_mention"].sum()),
+                "industry_exclusion_review": int(ind["exclusion_review"].notna().sum()),
             }
         )
     return pd.DataFrame(rows)

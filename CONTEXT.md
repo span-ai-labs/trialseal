@@ -6,6 +6,10 @@ Forecasting the results of randomised phase 3 cancer trials before they are know
 
 ### Trials and results
 
+**Candidate**:
+A randomised phase 3 cancer trial in the registry with a time-to-event primary endpoint that has not been withdrawn. A candidate becomes an eligible trial only after screening.
+_Avoid_: Universe trial, in-scope trial
+
 **Eligible trial**:
 A randomised phase 3 cancer trial with a time-to-event primary endpoint and no public primary result on the day a forecast is sealed.
 _Avoid_: In-window trial, upcoming trial
@@ -30,12 +34,20 @@ _Avoid_: Failed trial
 A trial ended for safety, enrolment or strategy without a primary analysis. It has no readout.
 _Avoid_: Terminated, cancelled
 
+**Alias record**:
+The names a trial's readout may be announced under: its acronym, sponsor study number, other registry numbers, intervention names and code names, and its sponsors.
+_Avoid_: Synonyms, search terms
+
+**Exclusion review**:
+A flag on a candidate whose design may rule it out, such as a mention of non-inferiority, to be settled by a person before it can be eligible.
+_Avoid_: Excluded, filtered out
+
 **Unresolved trial**:
 An eligible trial for which no readout has been found by the analysis date.
 _Avoid_: Pending, missing, silent trial
 
 **Scored endpoint**:
-The single primary endpoint, named when a forecast is sealed, whose reported hazard ratio the effect-size forecast is scored against. Where a trial has several, it is the first listed in the frozen registry record.
+The single primary endpoint, named when a forecast is sealed, whose reported hazard ratio the effect-size forecast is scored against. It is the first time-to-event primary endpoint listed in the frozen registry record, so a response-rate endpoint listed ahead of it is passed over.
 _Avoid_: Main endpoint, key endpoint
 
 ### Forecasts
@@ -55,6 +67,14 @@ _Avoid_: Raw model, baseline model
 **Span forecaster**:
 The one named forecasting system Span builds and enters, frozen before each batch.
 _Avoid_: Our model, the product
+
+**Endpoint type**:
+One of overall survival, progression-type (any endpoint counting disease progression, recurrence or relapse as an event), or other time-to-event.
+_Avoid_: Endpoint kind, endpoint category
+
+**Sponsor type**:
+Industry-led or not, taken from the lead sponsor.
+_Avoid_: Sponsor class, funder type
 
 **Reference class**:
 A group of past trials that share sponsor type and endpoint type.
