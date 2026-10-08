@@ -3,65 +3,56 @@ import dataclasses
 import datetime as dt
 import hashlib
 import json
+import shutil
 import subprocess
 
 import pytest
 
 from registry_records import study
 from trialforecast import records, universe
-from trialforecast.anchors import AnchorCheck, AnchorFailed
+from trialforecast.anchors import AnchorCheck
 from trialforecast.batch import Batch, InvalidForecast, build_batch
 from trialforecast.forecasting import BaseRateForecaster, Forecast
 from trialforecast.screening import IneligibleTrial, ScreeningRecord
 from trialforecast.sealing import (
     NotInSeal, NotRegistered, Opening, Registration, SealNotAnchored, TamperedSeal, publish_seal, read_registration,
-    read_seal, seal_batch, verify_command, verify_opening, verify_seal, write_sealed_batch,
+    Plan, open_sealed_batch, read_plan, read_seal, read_sealed_study, seal_batch, verify_command, verify_opening, verify_seal, write_sealed_batch,
 )
 
-BATCH_1 = dt.date(2026, 11, 2)
-REGISTERED = Registration(registry="OSF", url="https://osf.example/abcde", registered_on=dt.date(2026, 10, 31),
-                          protocol_sha256="ab" * 32)
-BASE_RATES = {"industry/overall_survival": 0.55}
-HAZARD_RATIOS = {"industry/overall_survival": (0.84, 0.66, 1.07)}
-
-
-class FakeService:
-    """A stand-in time-stamping service: its anchor is the fingerprint under a method-specific prefix."""
-
-    def __init__(self, method, signed_on=BATCH_1):
-        self.method, self._signed_on = method, signed_on
-
-    def anchor(self, fingerprint):
-        return f"{self.method}:{fingerprint}".encode()
-
-    def verify(self, fingerprint, anchor):
-        if anchor != f"{self.method}:{fingerprint}".encode():
-            raise AnchorFailed(f"{self.method}: not an anchor for {fingerprint}")
-        return AnchorCheck(signed_on=self._signed_on if self.method == "rfc3161" else None, complete=True)
-
+from study_records import BASE_RATES, BATCH_1, BATCH_2, HAZARD_RATIOS, PLAN, REGISTERED, FakeService, services
 
 class StandIn:
-    name, version = "stand_in", "1"
+    name, version, probability = "stand_in", "1", 0.8
 
     def forecast(self, candidate, batch_date):
         return Forecast(nct=candidate["nct"], forecaster=self.name, version=self.version, batch_date=batch_date,
-                        probability_positive=0.8, hazard_ratio=0.8, hazard_ratio_low=0.6, hazard_ratio_high=1.05)
+                        probability_positive=self.probability, hazard_ratio=0.8, hazard_ratio_low=0.6, hazard_ratio_high=1.05)
 
 
-SERVICES = [FakeService("rfc3161"), FakeService("opentimestamps")]
+SERVICES = services()
 SCREENING = [ScreeningRecord(nct=nct, decision="eligible", screened_on=dt.date(2026, 10, 30), evidence="searched")
              for nct in ("NCT1", "NCT2")]
 
 
-def a_batch():
+def a_batch(on=BATCH_1, probability=0.8):
     trials = [universe.flatten(study(nct, "Overall survival")) for nct in ("NCT1", "NCT2")]
-    return build_batch(BATCH_1, trials, SCREENING,
-                       [BaseRateForecaster(BASE_RATES, HAZARD_RATIOS, version="2026-11"), StandIn()])
+    screening = [dataclasses.replace(s, screened_on=on - dt.timedelta(days=3)) for s in SCREENING]
+    stand_in = StandIn()
+    stand_in.probability = probability
+    return build_batch(on, trials, screening, [BaseRateForecaster(BASE_RATES, HAZARD_RATIOS, version="2026-11"), stand_in])
 
 
 def sealed(**kwargs):
-    arguments = dict(batch=a_batch(), screening=SCREENING, registration=REGISTERED, services=SERVICES, today=BATCH_1)
+    arguments = dict(batch=a_batch(), screening=SCREENING, registration=REGISTERED, plan=PLAN, previous=None,
+                     services=SERVICES, today=BATCH_1)
     return seal_batch(**{**arguments, **kwargs})
+
+
+def sealed_after(previous, on=BATCH_2, **kwargs):
+    """A later batch sealed on its own day, following an earlier seal."""
+    batch = a_batch(on, probability=0.3)
+    screening = [dataclasses.replace(s, screened_on=on - dt.timedelta(days=3)) for s in SCREENING]
+    return sealed(**{**dict(batch=batch, screening=screening, previous=previous, services=services(on), today=on), **kwargs})
 
 
 def openings_for(sealed_batch, nct):
@@ -433,3 +424,146 @@ def test_publishing_refuses_a_seal_that_is_a_link_or_that_git_ignores(repository
     git(repository, "push", "-q", "origin", "main")
     with pytest.raises(ValueError, match="ignore"):
         publish_seal(repository, public_dir, SERVICES)
+
+
+# --- reading a sealed batch back for analysis ------------------------------------------
+
+
+def test_a_sealed_batch_is_read_back_from_its_seal_and_its_openings(tmp_path):
+    public_dir, private_dir = write_sealed_batch(sealed(), tmp_path / "seals", tmp_path / "private")
+    assert open_sealed_batch(public_dir, private_dir / "openings.jsonl", SERVICES) == a_batch()
+
+
+def test_a_sealed_batch_is_not_read_back_unless_every_commitment_is_opened_as_sealed(tmp_path):
+    public_dir, private_dir = write_sealed_batch(sealed(), tmp_path / "seals", tmp_path / "private")
+    openings = private_dir / "openings.jsonl"
+    written = openings.read_text()
+
+    openings.write_text("".join(written.splitlines(keepends=True)[:-1]))
+    with pytest.raises(NotInSeal, match="stand_in / NCT2"):
+        open_sealed_batch(public_dir, openings, SERVICES)
+
+    assert "0.8" in written
+    openings.write_text(written.replace("0.8", "0.9"))
+    with pytest.raises(NotInSeal):
+        open_sealed_batch(public_dir, openings, SERVICES)
+
+    openings.write_text(written + written.splitlines(keepends=True)[0])
+    with pytest.raises(NotInSeal, match="opened more than once"):
+        open_sealed_batch(public_dir, openings, SERVICES)
+
+    openings.write_text(written)
+    (public_dir / "seal.json.tsr").write_bytes(b"not an anchor")
+    with pytest.raises(SealNotAnchored):
+        open_sealed_batch(public_dir, openings, SERVICES)
+
+
+# --- the plan and the chain of seals ------------------------------------------------------
+
+
+def test_a_seal_names_the_registered_plan_and_the_seal_before_it():
+    first = sealed().seal
+    assert (first.plan, first.previous_seal) == (PLAN, None)
+    second = sealed_after(first).seal
+    assert (second.plan, second.previous_seal) == (PLAN, first.fingerprint)
+    document = json.loads(second.file_bytes())
+    assert document["plan"] == {"forecaster": "stand_in", "reference": "base_rate", "effect_size_baselines": ["base_rate"]}
+    assert document["previous_seal"] == first.fingerprint
+
+
+def test_a_plan_names_two_different_forecasters_and_at_least_one_baseline(tmp_path):
+    for wrong in (dict(reference="stand_in"), dict(effect_size_baselines=()), dict(forecaster="Not A Name"),
+                  dict(effect_size_baselines=("stand_in",))):
+        with pytest.raises(ValueError):
+            dataclasses.replace(PLAN, **wrong)
+    recorded = tmp_path / "analysis_plan.json"
+    recorded.write_text(json.dumps({"forecaster": "stand_in", "reference": "base_rate", "effect_size_baselines": ["base_rate"]}))
+    assert read_plan(recorded) == PLAN
+
+
+def test_a_batch_is_not_sealed_under_a_plan_that_names_a_forecaster_it_lacks():
+    with pytest.raises(ValueError, match="span"):
+        sealed(plan=dataclasses.replace(PLAN, forecaster="span"))
+    with pytest.raises(ValueError, match="shrunk"):
+        sealed(plan=dataclasses.replace(PLAN, effect_size_baselines=("base_rate", "shrunk")))
+
+
+def test_the_plan_cannot_change_once_a_batch_is_sealed_and_seals_follow_in_date_order():
+    first = sealed().seal
+    with pytest.raises(ValueError, match="plan"):
+        sealed_after(first, plan=Plan("base_rate", "stand_in", ("stand_in",)))
+    with pytest.raises(ValueError, match="after"):
+        sealed(previous=first)    # a second seal on the first one's date
+
+
+def test_a_sealed_study_is_read_back_whole_or_not_at_all(tmp_path):
+    first = sealed()
+    second = sealed_after(first.seal)
+    third = sealed_after(second.seal, on=dt.date(2027, 1, 4))
+    for sealed_batch in (first, second, third):
+        write_sealed_batch(sealed_batch, tmp_path / "seals", tmp_path / "private")
+    class AnyDay(FakeService):
+        """Checks an anchor as signed on the day the seal names, as a real service reports the day it signed."""
+
+        def verify(self, fingerprint, anchor):
+            super().verify(fingerprint, anchor)
+            signed_on = next(s.seal.batch_date for s in (first, second, third) if s.seal.fingerprint == fingerprint)
+            return AnchorCheck(signed_on=signed_on if self.method == "rfc3161" else None, complete=True)
+
+    checking = [AnyDay("rfc3161"), AnyDay("opentimestamps")]
+    study = read_sealed_study(tmp_path / "seals", tmp_path / "private", checking)
+    assert [b.batch_date for b in study.batches] == [BATCH_1, BATCH_2, dt.date(2027, 1, 4)]
+    assert study.plan == PLAN and study.seals == tuple(s.seal.fingerprint for s in (first, second, third))
+
+    # With the first or a middle seal taken away, a later forecast could pass for a trial's first.
+    for taken_away in (BATCH_1, BATCH_2):
+        copy = tmp_path / f"without-{taken_away}"
+        shutil.copytree(tmp_path / "seals", copy)
+        shutil.rmtree(copy / taken_away.isoformat())
+        with pytest.raises(TamperedSeal, match="does not follow"):
+            read_sealed_study(copy, tmp_path / "private", checking)
+
+    assert read_sealed_study(tmp_path / "nothing-here", tmp_path / "private", checking).batches == ()
+
+
+def test_a_seal_is_not_analysed_until_its_opentimestamps_anchor_has_reached_the_block_chain(tmp_path):
+    public_dir, private_dir = write_sealed_batch(sealed(), tmp_path / "seals", tmp_path / "private")
+    with pytest.raises(SealNotAnchored, match="block chain"):
+        open_sealed_batch(public_dir, private_dir / "openings.jsonl", services(complete=False))
+
+
+def test_a_seal_directory_is_named_for_the_date_of_its_seal(tmp_path):
+    public_dir, _ = write_sealed_batch(sealed(), tmp_path / "seals", tmp_path / "private")
+    public_dir.rename(tmp_path / "seals" / "2026-11-03")
+    with pytest.raises(TamperedSeal, match="2026-11-03"):
+        read_sealed_study(tmp_path / "seals", tmp_path / "private", SERVICES)
+
+
+def test_a_batch_is_not_sealed_with_a_reference_or_baseline_that_gave_no_forecast():
+    class Silent(StandIn):
+        name = "silent"
+
+        def forecast(self, candidate, batch_date):
+            return Forecast(nct=candidate["nct"], forecaster=self.name, version=self.version, batch_date=batch_date,
+                            probability_positive=None, hazard_ratio=None, hazard_ratio_low=None, hazard_ratio_high=None,
+                            no_forecast="refused")
+
+    trials = [universe.flatten(study(nct, "Overall survival")) for nct in ("NCT1", "NCT2")]
+    batch = build_batch(BATCH_1, trials, SCREENING,
+                        [BaseRateForecaster(BASE_RATES, HAZARD_RATIOS, version="2026-11"), StandIn(), Silent()])
+    sealed(batch=batch)    # a forecaster outside the plan may have no forecast
+    for plan in (Plan("stand_in", "silent", ("base_rate",)), Plan("stand_in", "base_rate", ("silent",))):
+        with pytest.raises(ValueError, match="silent gave no forecast"):
+            sealed(batch=batch, plan=plan)
+
+
+def test_a_seal_that_carries_another_plan_than_the_first_is_refused_when_read_back(tmp_path):
+    first = sealed()
+    second = sealed_after(first.seal)
+    other_plan = dataclasses.replace(second.seal, plan=Plan("base_rate", "stand_in", ("stand_in",)))
+    forged = dataclasses.replace(second, seal=other_plan,
+                                 anchors={s.method: s.anchor(other_plan.fingerprint) for s in services(BATCH_2)})
+    write_sealed_batch(first, tmp_path / "seals", tmp_path / "private")
+    write_sealed_batch(forged, tmp_path / "seals", tmp_path / "private")
+    with pytest.raises(TamperedSeal, match="plan other than the first"):
+        read_sealed_study(tmp_path / "seals", tmp_path / "private", SERVICES)

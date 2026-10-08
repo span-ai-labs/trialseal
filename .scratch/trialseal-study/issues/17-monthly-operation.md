@@ -16,3 +16,5 @@
 ## Comments
 
 **2026-10-08, from ticket 06.** Each month's routine should upgrade the previous batch's OpenTimestamps anchor and publish the completed file, and back up the private openings.
+
+**2026-10-08, from ticket 13.** The registered analyses are run with `trialseal-analysis`, which does nothing before the descriptive look's date. At the final analysis date every sealed trial needs either a settled result or a screening dated on or after that date, so the month's screening pass must cover every sealed trial. Seals follow one another: each batch is sealed with the previous seal in hand.

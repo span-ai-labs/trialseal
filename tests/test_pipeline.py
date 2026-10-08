@@ -9,60 +9,17 @@ import pytest
 from registry_records import study
 from trialforecast import records, universe
 from trialforecast.adjudication import Adjudication, AdjudicationLog, record_adjudication
-from trialforecast.analysis import primary_comparison
-from trialforecast.batch import InvalidForecast, TamperedBatch, batch_cost, build_batch, read_batch, write_batch
+from trialforecast.analysis import primary_comparison, study_state
+from trialforecast.batch import (
+    BatchTrial, InvalidForecast, TamperedBatch, batch_cost, build_batch, read_batch, write_batch,
+)
 from trialforecast.forecasting import BaseRateForecaster, Forecast
 from trialforecast.screening import IneligibleTrial, ScreeningRecord, eligible_trials
 
-BATCH_1 = dt.date(2026, 11, 2)
-BATCH_2 = dt.date(2026, 12, 1)
-SCREENED_ON = dt.date(2026, 10, 30)
-ANALYSIS_DATE = dt.date(2028, 5, 2)
-BASE_RATES = {"industry/overall_survival": 0.55, "industry/progression": 0.66, "non_industry/overall_survival": 0.3}
-HAZARD_RATIOS = {
-    "industry/overall_survival": (0.84, 0.66, 1.07),
-    "industry/progression": (0.70, 0.50, 0.98),
-    "non_industry/overall_survival": (0.92, 0.70, 1.20),
-}
-
-
-def candidate(nct, measure="Overall survival", **kwargs):
-    return universe.flatten(study(nct, measure, **kwargs))
-
-
-def screened(nct, decision, on=SCREENED_ON):
-    return ScreeningRecord(nct=nct, decision=decision, screened_on=on, evidence="searched press releases and filings")
-
-
-def adjudicated(nct, adjudicator, outcome, readout=dt.date(2027, 3, 14)):
-    stopped_without_analysis = outcome == "void"
-    return Adjudication(
-        nct=nct, adjudicator=adjudicator, recorded_on=readout, source_type="press_release_or_filing",
-        source="https://example.test/topline", disclosed_on=readout, language="en",
-        original_text="Topline results were announced.", translation=None, endpoint_rule="single",
-        endpoint_results=() if stopped_without_analysis else (("met",) if outcome == "positive" else ("not_met",)),
-        early_stop="no_analysis" if stopped_without_analysis else None, outcome=outcome,
-    )
-
-
-def both_adjudicated(nct, outcome, readout=dt.date(2027, 3, 14)):
-    return [adjudicated(nct, "first", outcome, readout), adjudicated(nct, "second", outcome, readout)]
-
-
-def base_rate():
-    return BaseRateForecaster(BASE_RATES, HAZARD_RATIOS, version="2026-11")
-
-
-class FixedForecaster:
-    """A stand-in forecaster that gives every trial the same answer."""
-
-    def __init__(self, name, probability, version="1"):
-        self.name, self.version, self._probability = name, version, probability
-
-    def forecast(self, candidate, batch_date):
-        return Forecast(nct=candidate["nct"], forecaster=self.name, version=self.version, batch_date=batch_date,
-                        probability_positive=self._probability, hazard_ratio=0.8, hazard_ratio_low=0.6,
-                        hazard_ratio_high=1.05)
+from study_records import (
+    ANALYSIS_DATE, BASE_RATES, BATCH_1, BATCH_2, HAZARD_RATIOS, SCREENED_ON, FixedForecaster, Unanswering, adjudicated,
+    base_rate, both_adjudicated, candidate, screened,
+)
 
 
 # --- forecasts and forecasters ---------------------------------------------------
@@ -171,6 +128,23 @@ def test_a_batch_names_each_trials_scored_endpoint_and_reference_class():
         "NCT1", "Progression-free survival (PFS)", "industry", "progression")
 
 
+def test_a_batch_names_each_trials_investigational_drug_and_registry_completion_date():
+    trials = [candidate("NCT1", drug="Examplumab 200 mg (EX-101)", pcd="2027-03"), candidate("NCT2")]
+    batch = build_batch(BATCH_1, trials, [screened("NCT1", "eligible"), screened("NCT2", "eligible")], [base_rate()])
+    first, second = batch.trials
+    assert (first.investigational_drug, first.registry_completion_date) == ("examplumab", "2027-03")
+    assert second.investigational_drug is None
+
+
+def test_a_batch_trial_holds_one_spelling_of_a_drug_and_a_registry_date():
+    ok = dict(nct="NCT1", scored_endpoint="Overall survival", sponsor_type="industry", endpoint_type="overall_survival")
+    BatchTrial(**ok, investigational_drug="examplumab", registry_completion_date="2027-03-31")
+    with pytest.raises(ValueError, match="one spelling"):
+        BatchTrial(**ok, investigational_drug="Examplumab ")
+    with pytest.raises(ValueError, match="registry completion date"):
+        BatchTrial(**ok, registry_completion_date="March 2027")
+
+
 def test_a_batch_rejects_a_forecast_that_is_not_what_was_asked_for():
     class AnswersForAnotherTrial(FixedForecaster):
         def forecast(self, candidate, batch_date):
@@ -240,8 +214,8 @@ def test_the_primary_comparison_scores_only_each_trials_first_forecast():
     ]
     adjudications = both_adjudicated("NCT1", "positive") + both_adjudicated("NCT2", "negative")
 
-    result = primary_comparison(batches, AdjudicationLog(adjudications), forecaster="stand_in", reference="base_rate",
-                                analysis_date=ANALYSIS_DATE)
+    held = study_state(batches, AdjudicationLog(adjudications), ANALYSIS_DATE)
+    result = primary_comparison(held, "stand_in", "base_rate")
 
     assert result["n_trials"] == 2
     # NCT1 positive: first forecast 0.2 -> 0.64 (the later 0.95 is ignored). NCT2 negative: 0.95 -> 0.9025.
@@ -255,8 +229,7 @@ def test_two_batches_on_one_date_make_the_first_forecast_ambiguous():
     batches = [build_batch(BATCH_1, [candidate("NCT1")], log, [base_rate(), FixedForecaster("stand_in", p)])
                for p in (0.2, 0.95)]
     with pytest.raises(ValueError, match="2026-11-02"):
-        primary_comparison(batches, AdjudicationLog(both_adjudicated("NCT1", "positive")), forecaster="stand_in",
-                           reference="base_rate", analysis_date=ANALYSIS_DATE)
+        study_state(batches, AdjudicationLog(both_adjudicated("NCT1", "positive")), ANALYSIS_DATE)
 
 
 def test_only_agreed_positive_or_negative_industry_led_trials_are_scored():
@@ -269,8 +242,8 @@ def test_only_agreed_positive_or_negative_industry_led_trials_are_scored():
         adjudicated("NCT3", "first", "positive"),        # one adjudicator only
         *both_adjudicated("NCT4", "positive"),           # not industry-led: outside the primary analysis set
     ]
-    result = primary_comparison([batch], AdjudicationLog(adjudications), forecaster="stand_in", reference="base_rate",
-                                analysis_date=ANALYSIS_DATE)
+    held = study_state([batch], AdjudicationLog(adjudications), ANALYSIS_DATE)
+    result = primary_comparison(held, "stand_in", "base_rate")
     assert result["n_trials"] == 1
     assert result["brier"]["stand_in"] == pytest.approx(0.01)
     assert result["awaiting_adjudication"] == {"NCT3": "awaiting second adjudication"}
@@ -282,19 +255,10 @@ def test_a_forecast_issued_on_or_after_the_readout_is_reported_and_not_scored():
     batch = build_batch(BATCH_1, trials, log, [base_rate(), FixedForecaster("stand_in", 0.9)])
     adjudications = (both_adjudicated("NCT1", "positive", readout=dt.date(2027, 3, 14))
                      + both_adjudicated("NCT2", "positive", readout=BATCH_1))  # screening missed this readout
-    result = primary_comparison([batch], AdjudicationLog(adjudications), forecaster="stand_in", reference="base_rate",
-                                analysis_date=ANALYSIS_DATE)
+    held = study_state([batch], AdjudicationLog(adjudications), ANALYSIS_DATE)
+    result = primary_comparison(held, "stand_in", "base_rate")
     assert result["n_trials"] == 1
     assert result["forecast_not_before_readout"] == ["NCT2"]
-
-
-class Unanswering(FixedForecaster):
-    """A stand-in forecaster that produces no forecast, as a model does when its runs fail."""
-
-    def forecast(self, candidate, batch_date):
-        return Forecast(nct=candidate["nct"], forecaster=self.name, version=self.version, batch_date=batch_date,
-                        probability_positive=None, hazard_ratio=None, hazard_ratio_low=None, hazard_ratio_high=None,
-                        no_forecast="every run refused", input_tokens=4500, output_tokens=0, cost_usd=0.018)
 
 
 def test_a_record_of_no_forecast_is_kept_in_the_batch_and_scored_at_the_reference(tmp_path):
@@ -302,10 +266,10 @@ def test_a_record_of_no_forecast_is_kept_in_the_batch_and_scored_at_the_referenc
     log = [screened("NCT1", "eligible")]
     batch = build_batch(BATCH_1, trials, log, [base_rate(), Unanswering("stand_in", 0.0)])
     assert read_batch(write_batch(batch, tmp_path)) == batch
-    result = primary_comparison([batch], AdjudicationLog(both_adjudicated("NCT1", "positive")), forecaster="stand_in",
-                                reference="base_rate", analysis_date=ANALYSIS_DATE)
+    held = study_state([batch], AdjudicationLog(both_adjudicated("NCT1", "positive")), ANALYSIS_DATE)
+    result = primary_comparison(held, "stand_in", "base_rate")
     # Declining to forecast earns exactly the reference's score, never a better one.
-    assert result["n_trials"] == 1 and result["no_forecast"] == ["NCT1"]
+    assert result["n_trials"] == 1 and result["scored_at_reference"] == {"NCT1": "every run refused"}
     assert result["brier"]["stand_in"] == result["brier"]["base_rate"] == pytest.approx(0.2025)
 
 
@@ -361,8 +325,8 @@ def test_one_trial_travels_from_snapshot_to_score(tmp_path, monkeypatch):
     assert adjudications == both_adjudicated("NCT1", "positive")
 
     # The primary comparison scores the first forecasts from the batch read back from disk.
-    result = primary_comparison([read_back], AdjudicationLog(adjudications), forecaster="stand_in", reference="base_rate",
-                                analysis_date=ANALYSIS_DATE)
+    result = primary_comparison(study_state([read_back], AdjudicationLog(adjudications), ANALYSIS_DATE), "stand_in",
+                                "base_rate")
     assert result["n_trials"] == 1
     assert result["brier"]["stand_in"] == pytest.approx(0.04)      # (0.8 - 1)^2
     assert result["brier"]["base_rate"] == pytest.approx(0.2025)   # (0.55 - 1)^2

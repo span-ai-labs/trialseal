@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from trialforecast import records
-from trialforecast.anchors import METHODS, AnchorCheck, AnchorFailed, TimestampService
+from trialforecast.anchors import METHODS, AnchorCheck, AnchorFailed, TimestampService, verifying_services
 from trialforecast.batch import Batch, BatchTrial
 from trialforecast.forecasting import FORECASTER_NAME, Forecast
 from trialforecast.records import require_plain_date
@@ -80,6 +80,34 @@ def read_registration(path: pathlib.Path) -> Registration | None:
 
 
 @dataclass(frozen=True)
+class Plan:
+    """The registered comparison: the forecaster that carries the claim, its reference, and the effect-size baselines.
+
+    Every seal carries it, so which forecaster carries the claim is fixed before any result is known.
+    """
+
+    forecaster: str
+    reference: str
+    effect_size_baselines: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "effect_size_baselines", tuple(self.effect_size_baselines))
+        if not all(isinstance(name, str) and FORECASTER_NAME.fullmatch(name) for name in self.forecasters):
+            raise ValueError(f"a plan names forecasters, not {self.forecasters}")
+        if not self.effect_size_baselines or self.forecaster in (self.reference, *self.effect_size_baselines):
+            raise ValueError("a plan compares one forecaster with a reference and at least one baseline, all other than itself")
+
+    @property
+    def forecasters(self) -> tuple[str, ...]:
+        return (self.forecaster, self.reference, *self.effect_size_baselines)
+
+
+def read_plan(path: pathlib.Path) -> Plan:
+    """The plan as recorded in the study folder, for the first sealing to carry."""
+    return records.from_line(Plan, path.read_text(encoding="utf-8"))
+
+
+@dataclass(frozen=True)
 class Opening:
     """What is disclosed at reveal for one forecast: its canonical line and the salt of its commitment."""
 
@@ -102,11 +130,20 @@ class Seal:
     protocol_sha256: str
     trials: tuple[BatchTrial, ...]
     commitments: dict[str, dict[str, str]]  # forecaster, then trial
+    plan: Plan
+    previous_seal: str | None  # the fingerprint of the seal before this one, so that none can be left out later
 
     def __post_init__(self) -> None:
         require_plain_date(self.batch_date, "batch date")
         if not isinstance(self.registration_url, str) or not _SHA256_HEX.fullmatch(str(self.protocol_sha256)):
             raise ValueError("a seal must name the registered protocol")
+        if not isinstance(self.plan, Plan):
+            raise ValueError("a seal must carry the registered plan")
+        absent = [name for name in self.plan.forecasters if name not in self.commitments]
+        if absent:
+            raise ValueError(f"the plan names forecasters that are not in the batch: {', '.join(absent)}")
+        if self.previous_seal is not None and not _SHA256_HEX.fullmatch(str(self.previous_seal)):
+            raise ValueError("the seal before this one is named by its SHA-256 in hexadecimal")
         listed = sorted(t.nct for t in self.trials)
         if len(set(listed)) != len(listed):
             raise ValueError("a seal lists each trial once")
@@ -124,6 +161,8 @@ class Seal:
             "protocol_sha256": self.protocol_sha256,
             "trials": [json.loads(records.to_line(t)) for t in sorted(self.trials, key=lambda t: t.nct)],
             "commitments": self.commitments,
+            "plan": json.loads(records.to_line(self.plan)),
+            "previous_seal": self.previous_seal,
         }
         return (json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8")
 
@@ -160,13 +199,16 @@ def seal_batch(
     batch: Batch,
     screening: Iterable[ScreeningRecord],
     registration: Registration | None,
+    plan: Plan,
+    previous: Seal | None,
     services: Iterable[TimestampService],
     today: dt.date,
 ) -> SealedBatch:
-    """Seal a batch on its own date.
+    """Seal a batch on its own date, under the registered plan, following the seal before it.
 
     Refuses without a registered protocol, an eligible screening for every trial,
-    or one anchor from each kind of time-stamping service signed that day.
+    or one anchor from each kind of time-stamping service signed that day. Refuses
+    a plan other than the previous seal's, and a batch not dated after it.
     """
     if registration is None:
         raise NotRegistered("no protocol registration is recorded")
@@ -174,6 +216,14 @@ def seal_batch(
         raise NotRegistered(f"the protocol was registered on {registration.registered_on}, after this batch")
     if today != batch.batch_date:
         raise ValueError(f"a batch dated {batch.batch_date} can only be sealed on that day, not on {today}")
+    if previous is not None and previous.plan != plan:
+        raise ValueError("the plan cannot change once a batch is sealed")
+    if previous is not None and previous.batch_date >= batch.batch_date:
+        raise ValueError(f"a batch is sealed after the one before it, which was dated {previous.batch_date}")
+    # The reference and the baselines are what every comparison falls back on, so they must have forecast every trial.
+    for name in (plan.reference, *plan.effect_size_baselines):
+        if any(forecast.no_forecast for forecast in batch.forecasts.get(name, ())):
+            raise ValueError(f"{name} gave no forecast for a trial, so it cannot be the reference or a baseline")
     require_eligible(batch.batch_date, [t.nct for t in batch.trials], screening)
     services = list(services)
     if sorted(s.method for s in services) != sorted(METHODS):
@@ -186,7 +236,8 @@ def seal_batch(
     commitments: dict[str, dict[str, str]] = {}
     for opening in openings:
         commitments.setdefault(opening.forecaster, {})[opening.nct] = opening.commitment
-    seal = Seal(batch.batch_date, registration.url, registration.protocol_sha256, batch.trials, commitments)
+    seal = Seal(batch.batch_date, registration.url, registration.protocol_sha256, batch.trials, commitments, plan,
+                previous.fingerprint if previous else None)
     anchors = {s.method: s.anchor(seal.fingerprint) for s in services}
     verify_seal(seal, anchors, services)
     return SealedBatch(seal, openings, anchors)
@@ -237,6 +288,8 @@ def read_seal(public_dir: pathlib.Path) -> tuple[Seal, dict[str, bytes]]:
             protocol_sha256=document["protocol_sha256"],
             trials=tuple(BatchTrial(**t) for t in document["trials"]),
             commitments=document["commitments"],
+            plan=Plan(**document["plan"]),
+            previous_seal=document["previous_seal"],
         )
     except (ValueError, TypeError, KeyError) as unreadable:
         raise TamperedSeal(f"{public_dir}: the seal file cannot be read as a seal") from unreadable
@@ -246,6 +299,71 @@ def read_seal(public_dir: pathlib.Path) -> tuple[Seal, dict[str, bytes]]:
         method: (public_dir / name).read_bytes() for method, name in ANCHOR_FILES.items() if (public_dir / name).exists()
     }
     return seal, anchors
+
+
+def _opened(seal: Seal, anchors: dict[str, bytes], openings_file: pathlib.Path, services: Iterable[TimestampService]) -> Batch:
+    checks = verify_seal(seal, anchors, services)
+    if not checks["opentimestamps"].complete:
+        raise SealNotAnchored(f"seal {seal.fingerprint}: its OpenTimestamps anchor has not reached the block chain; "
+                              f"upgrade it (`ots upgrade`) before the batch is analysed")
+    forecasts: dict[str, dict[str, Forecast]] = {name: {} for name in seal.commitments}
+    for opening in records.read(openings_file, Opening):
+        forecast = verify_opening(opening, seal)
+        if forecast.nct in forecasts[opening.forecaster]:
+            raise NotInSeal(f"{opening.forecaster} / {opening.nct}: opened more than once")
+        forecasts[opening.forecaster][forecast.nct] = forecast
+    unopened = [f"{name} / {nct}" for name, by_trial in sorted(seal.commitments.items())
+                for nct in sorted(by_trial) if nct not in forecasts[name]]
+    if unopened:
+        raise NotInSeal(f"no opening for: {', '.join(unopened)}")
+    return Batch(seal.batch_date, seal.trials,
+                 {name: tuple(by_trial[nct] for nct in sorted(by_trial)) for name, by_trial in forecasts.items()})
+
+
+def open_sealed_batch(
+    public_dir: pathlib.Path, openings_file: pathlib.Path, services: Iterable[TimestampService]
+) -> Batch:
+    """The batch behind a published seal, for analysis: every forecast shown to be the one committed to.
+
+    Refuses a seal without both anchors complete, and openings that are not exactly
+    one matching opening for each commitment in the seal.
+    """
+    seal, anchors = read_seal(public_dir)
+    return _opened(seal, anchors, openings_file, services)
+
+
+@dataclass(frozen=True)
+class SealedStudy:
+    """Every sealed batch read back through its seal, the plan the seals carry, and their fingerprints in order."""
+
+    batches: tuple[Batch, ...]
+    plan: Plan | None  # None where nothing has been sealed
+    seals: tuple[str, ...]
+
+
+def read_sealed_study(
+    public_root: pathlib.Path, private_root: pathlib.Path, services: Iterable[TimestampService]
+) -> SealedStudy:
+    """Read every sealed batch, refusing a set of seals that is not one unbroken chain under one plan.
+
+    Each seal names the one before it, so a seal taken away from the start or the
+    middle is noticed: without that, a later forecast could pass for a trial's first.
+    """
+    services = list(services)
+    days = sorted(d.name for d in public_root.iterdir() if (d / SEAL_FILE).exists()) if public_root.exists() else []
+    batches, previous = [], None
+    for day in days:
+        seal, anchors = read_seal(public_root / day)
+        if seal.batch_date.isoformat() != day:
+            raise TamperedSeal(f"{public_root / day}: holds the seal of {seal.batch_date}")
+        if seal.previous_seal != (previous.fingerprint if previous else None):
+            raise TamperedSeal(f"{public_root / day}: does not follow the seal before it; a seal is absent or out of order")
+        if previous is not None and seal.plan != previous.plan:
+            raise TamperedSeal(f"{public_root / day}: carries a plan other than the first seal's")
+        batches.append(_opened(seal, anchors, private_root / day / OPENINGS_FILE, services))
+        previous = seal
+    fingerprints = tuple(hashlib.sha256((public_root / day / SEAL_FILE).read_bytes()).hexdigest() for day in days)
+    return SealedStudy(tuple(batches), previous.plan if previous else None, fingerprints)
 
 
 def publish_seal(repository: pathlib.Path, public_dir: pathlib.Path, services: Iterable[TimestampService]) -> None:
@@ -300,14 +418,12 @@ def publish_seal(repository: pathlib.Path, public_dir: pathlib.Path, services: I
 
 def verify_command(arguments: list[str] | None = None, services: Iterable[TimestampService] | None = None) -> int:
     """Check revealed forecasts against a published seal: `trialseal-verify <seal directory> <openings file>`."""
-    from trialforecast.anchors import OpenTimestampsService, Rfc3161Service
-
     arguments = sys.argv[1:] if arguments is None else arguments
     if len(arguments) != 2:
         print("usage: trialseal-verify <seal directory> <openings file>")
         return 2
     public_dir, openings_file = pathlib.Path(arguments[0]), pathlib.Path(arguments[1])
-    services = [Rfc3161Service(""), OpenTimestampsService("")] if services is None else list(services)
+    services = verifying_services() if services is None else list(services)
     try:
         seal, anchors = read_seal(public_dir)
         checks = verify_seal(seal, anchors, services)

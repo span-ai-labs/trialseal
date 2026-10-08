@@ -194,3 +194,32 @@ def test_summary_counts_candidates_by_window_and_sponsor_type():
     assert (s.loc["next 15 months", "all_sponsors"], s.loc["next 15 months", "industry"]) == (2, 1)
     assert (s.loc["past 12 months", "all_sponsors"], s.loc["past 12 months", "industry"]) == (1, 1)
     assert (s.loc["past 24 months", "all_sponsors"], s.loc["past 24 months", "industry"]) == (2, 1)
+
+
+# --- investigational drug --------------------------------------------------------
+
+
+def test_the_investigational_drug_is_the_first_drug_given_in_experimental_arms_only():
+    # Docetaxel is listed first but both arms receive it; the placebo is never the drug under test.
+    assert u.flatten(study("NCT1", "Overall survival", drug="Examplumab"))["investigational_drug"] == "examplumab"
+    assert u.flatten(study("NCT2", "Overall survival"))["investigational_drug"] is None
+
+
+def test_a_drug_has_one_spelling_whatever_dose_or_code_name_the_registry_adds():
+    for written in ("Examplumab", " examplumab 200 mg IV every 3 weeks", "EXAMPLUMAB (EX-101)"):
+        assert u.drug_name(written) == "examplumab"
+    assert u.drug_name("Trastuzumab  Deruxtecan") == "trastuzumab deruxtecan"
+
+
+def test_a_placebo_a_procedure_or_a_drug_both_arms_receive_is_never_the_investigational_drug():
+    s = study("NCT1", "Overall survival", drug="Examplumab")
+    arms = s["protocolSection"]["armsInterventionsModule"]
+    arms["interventions"] = [
+        {"type": "PROCEDURE", "name": "Biopsy", "armGroupLabels": ["Experimental"]},
+        {"type": "DRUG", "name": "Placebo matching examplumab", "armGroupLabels": ["Experimental"]},
+        {"type": "DRUG", "name": "Docetaxel", "armGroupLabels": ["Experimental", "Control"]},
+        {"type": "BIOLOGICAL", "name": "Examplumab", "armGroupLabels": ["Experimental"]},
+    ]
+    assert u.investigational_drug(s) == "examplumab"
+    arms["interventions"] = arms["interventions"][:3]
+    assert u.investigational_drug(s) is None

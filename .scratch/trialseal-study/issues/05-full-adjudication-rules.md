@@ -23,7 +23,7 @@
 
 Review found the first version could be bypassed; each finding became a failing test and was fixed. In particular: a reconciliation must settle a recorded disagreement between the people who actually read the source; results no longer depend on the order of the log; the disclosure date is part of what must be agreed; and an entry made after its author opened the forecasts removes only that trial's result, and can be withdrawn and replaced by a blind reading.
 
-Rules introduced here that the study lead has not confirmed. They belong in the protocol:
+Rules introduced here. The study lead said on 2026-10-08 to go with all recommendations, which I have taken to cover these; they belong in the protocol:
 
 - Between two sources of the same rank, the later disclosure decides.
 - Any source read by only one adjudicator, or in dispute, holds back the whole trial's result.

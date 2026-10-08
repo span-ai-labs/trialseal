@@ -20,3 +20,5 @@
 **2026-10-08, from ticket 05.** Adjudication blindness depends on a record of who opened which trial's forecasts and when. Reveal, and any other tool that shows a forecast to a person, must write that record before showing it.
 
 **2026-10-08, from ticket 06.** A reveal is a file of openings for one trial, one line each, taken from the private openings of the batch. `trialseal-verify` already checks such a file against a published seal. This ticket adds the step that produces and publishes it, gated on legal sign-off and on an agreed adjudication.
+
+**2026-10-08, from ticket 13.** When adjudicators record a hazard ratio, the tool should offer the trial's scored endpoint as sealed, word for word. The effect-size analysis scores a hazard ratio only if it was recorded under exactly that name; recording it under any other name is how an adjudicator says it is for a different endpoint. Whoever opens a trial's forecasts must not have adjudication of that trial still to do: a trial adjudicated by someone who had opened its forecasts now blocks the final analysis until a blind reading replaces it.

@@ -24,14 +24,14 @@ Verified from the providers' own pages on 2026-10-08, and recorded in the roster
 
 Review found, and tests now cover: a wrong key or model name was retried and then recorded as a permanent missing forecast (it now stops the batch); refusals were mislabelled; several provider errors crashed the batch; `Infinity` was accepted as a hazard ratio; an earlier draft answer could stand in for a malformed final one; Google got no output cap; unpriced models showed a cost of zero.
 
-Rules introduced here that the study lead has not confirmed:
+Rules introduced here; the study lead confirmed them on 2026-10-08:
 
 - The roster itself: one model per provider (Claude Opus 5.5, GPT-6.1 Sol, Gemini 3.8 Flash), with effort `high` where the provider has the setting.
 - Asked five times; at least three usable answers are needed, otherwise no forecast is recorded.
 - A reply that was refused or cut off is never used, even if an answer can be read from it.
 - Only the last answer in a reply counts.
 - After an outage at the provider a reply is asked for again up to three more times; a refusal is never asked again.
-- A forecaster that produces no forecast is scored at the reference's probability (ADR-0013, proposed).
+- A forecaster that produces no forecast is scored at the reference's probability (ADR-0013, accepted).
 - A refusal is never passed to another model. Anthropic's library offers an automatic fallback to another model on refusal; it is deliberately not used, because a forecast must be the named model's own.
 
 Known limits:

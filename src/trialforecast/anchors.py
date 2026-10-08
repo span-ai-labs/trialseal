@@ -138,3 +138,8 @@ def configured_services(chosen: pathlib.Path) -> list[TimestampService]:
     if missing:
         raise ValueError(f"{chosen} names no service for: {', '.join(missing)}")
     return [Rfc3161Service(addresses["rfc3161"]), OpenTimestampsService(addresses["opentimestamps"])]
+
+
+def verifying_services() -> list[TimestampService]:
+    """One service of each kind for checking anchors, which needs no address to send anything to."""
+    return [Rfc3161Service(""), OpenTimestampsService("")]

@@ -5,14 +5,16 @@ import datetime as dt
 import hashlib
 import json
 import pathlib
+import re
 from dataclasses import dataclass
 from typing import Iterable
 
 from trialforecast import records
 from trialforecast.forecasting import Candidate, Forecast, Forecaster
 from trialforecast.screening import ScreeningRecord, require_eligible
-from trialforecast.universe import ENDPOINT_TYPES, SPONSOR_TYPES
+from trialforecast.universe import ENDPOINT_TYPES, SPONSOR_TYPES, drug_name
 
+_REGISTRY_DATE = re.compile(r"\d{4}-\d{2}(-\d{2})?")
 TRIALS_FILE = "_trials.jsonl"  # cannot collide with a forecaster's file: names never start with an underscore
 
 
@@ -26,12 +28,18 @@ class TamperedBatch(Exception):
 
 @dataclass(frozen=True)
 class BatchTrial:
-    """What is fixed about a trial when it enters a batch: its scored endpoint and reference class."""
+    """What is fixed about a trial when it enters a batch.
+
+    Its scored endpoint and reference class, the investigational drug that groups it
+    with other trials of that drug, and the registry completion date shown that day.
+    """
 
     nct: str
     scored_endpoint: str
     sponsor_type: str | None
     endpoint_type: str
+    investigational_drug: str | None = None
+    registry_completion_date: str | None = None  # as the registry gives it: a month or a day
 
     def __post_init__(self) -> None:
         records.require_trial_id(self.nct)
@@ -39,6 +47,12 @@ class BatchTrial:
             raise ValueError(f"{self.nct}: a trial in a batch must name its scored endpoint")
         if self.endpoint_type not in ENDPOINT_TYPES or self.sponsor_type not in (*SPONSOR_TYPES, None):
             raise ValueError(f"{self.nct}: unknown endpoint type or sponsor type")
+        drug = self.investigational_drug
+        if drug is not None and (not isinstance(drug, str) or not drug or drug != drug_name(drug)):
+            raise ValueError(f"{self.nct}: a drug is held in one spelling, {drug_name(str(drug))!r}, not {drug!r}")
+        completion = self.registry_completion_date
+        if completion is not None and not (isinstance(completion, str) and _REGISTRY_DATE.fullmatch(completion)):
+            raise ValueError(f"{self.nct}: registry completion date {completion!r} is not a month or a day")
 
 
 @dataclass(frozen=True)
@@ -116,7 +130,9 @@ def build_batch(
 
     batch_trials = tuple(
         BatchTrial(nct=c["nct"], scored_endpoint=c["scored_endpoint"],
-                   sponsor_type=_text_or_none(c["sponsor_type"]), endpoint_type=c["endpoint_type"])
+                   sponsor_type=_text_or_none(c["sponsor_type"]), endpoint_type=c["endpoint_type"],
+                   investigational_drug=_text_or_none(c["investigational_drug"]),
+                   registry_completion_date=_text_or_none(c["primary_completion_date"]))
         for c in trials
     )
     return Batch(batch_date=batch_date, trials=batch_trials, forecasts=forecasts)

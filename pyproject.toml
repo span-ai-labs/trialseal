@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
     "anthropic>=1.12.1",
     "google-genai>=2.29.0",
+    "matplotlib>=3.11.2",
     "numpy>=1.26",
     "openai>=3.26.1",
     "pandas>=2.2",
@@ -23,6 +24,7 @@ dev = ["pytest>=8"]
 [project.scripts]
 trialforecast-universe = "trialforecast.universe:main"
 trialseal-verify = "trialforecast.sealing:verify_command"
+trialseal-analysis = "trialforecast.report:main"
 
 [build-system]
 requires = ["hatchling"]

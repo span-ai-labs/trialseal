@@ -146,6 +146,17 @@ def usable_answer(text: str | None) -> tuple[float, float, float, float] | None:
     return (probability, hazard_ratio, low, high) if valid_numbers(probability, hazard_ratio, low, high) else None
 
 
+def ask_through_outages(ask: Ask, spec: ModelSpec, prompt: str, wait: Callable[[float], None] = time.sleep) -> tuple[Reply, int]:
+    """One reply, and how many attempts were lost to outages at the provider before it."""
+    lost = 0
+    reply = ask(spec, prompt)
+    while reply.failure == OUTAGE and lost < FURTHER_ATTEMPTS:
+        lost += 1
+        wait(PAUSE_SECONDS * lost)
+        reply = ask(spec, prompt)
+    return reply, lost + (reply.failure == OUTAGE)
+
+
 # --- a model as a forecaster ---------------------------------------------------------------
 
 
@@ -176,19 +187,9 @@ class ModelForecaster:
         effort = f"/effort-{spec.effort}" if spec.effort else ""
         self.version = f"{spec.model}{effort}/prompt-{PROMPT_VERSION}/asked-{times_asked}"
 
-    def _ask_once(self, prompt: str) -> tuple[Reply, int]:
-        """One reply, and how many attempts were lost to outages at the provider before it."""
-        lost = 0
-        reply = self._ask(self._spec, prompt)
-        while reply.failure == OUTAGE and lost < FURTHER_ATTEMPTS:
-            lost += 1
-            self._wait(PAUSE_SECONDS * lost)
-            reply = self._ask(self._spec, prompt)
-        return reply, lost + (reply.failure == OUTAGE)
-
     def forecast(self, candidate: Candidate, batch_date: dt.date) -> Forecast:
         prompt = forecasting_prompt(candidate)
-        asked = [self._ask_once(prompt) for _ in range(self._times_asked)]
+        asked = [ask_through_outages(self._ask, self._spec, prompt, self._wait) for _ in range(self._times_asked)]
         replies = [reply for reply, _ in asked]
         answers = [found for r in replies if r.failure is None and (found := usable_answer(r.text)) is not None]
         needed = math.ceil(self._times_asked * USABLE_SHARE_NEEDED)

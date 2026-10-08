@@ -7,7 +7,7 @@ import pytest
 from trialforecast import records
 from trialforecast.adjudication import (
     Adjudication, AdjudicationLog, ForecastAccess, NotBlind, Reconciliation, Withdrawal, awaiting_result,
-    derive_outcome, record_adjudication, record_reconciliation, results,
+    derive_outcome, read_log, record_adjudication, record_reconciliation, results,
 )
 
 TOPLINE_DAY = dt.date(2027, 3, 14)
@@ -384,3 +384,97 @@ def test_a_reading_that_was_not_blind_can_be_withdrawn_and_replaced_by_a_blind_o
     log = log_of(both() + [third], withdrawals=[withdrawal], forecast_access=opened)
     assert results(log, TOPLINE_DAY)  == {}
     assert results(log, LATER)["NCT1"].outcome == "positive"
+
+
+# --- the log on disk ---------------------------------------------------------------------
+
+
+def test_the_whole_log_is_read_back_from_its_directory(tmp_path):
+    first, second = adjudicated(adjudicator="first"), adjudicated(adjudicator="second", outcome="negative")
+    settled = Reconciliation(nct="NCT1", source_type="press_release_or_filing", source=TOPLINE, outcome="positive",
+                             hazard_ratio=None, hazard_ratio_endpoint=None, disclosed_on=TOPLINE_DAY,
+                             reason="the second reading took a secondary endpoint for the primary",
+                             adjudicators=("first", "second"), recorded_on=TOPLINE_DAY)
+    opened = ForecastAccess(nct="NCT1", person="first", opened_on=LATER)
+    assert read_log(tmp_path) == AdjudicationLog()
+
+    record_adjudication(tmp_path / "adjudications.jsonl", first, [])
+    record_adjudication(tmp_path / "adjudications.jsonl", second, [])
+    record_reconciliation(tmp_path / "reconciliations.jsonl", settled, AdjudicationLog([first, second]))
+    records.append(tmp_path / "forecast_access.jsonl", opened)
+
+    log = read_log(tmp_path)
+    assert log == AdjudicationLog([first, second], [settled], [], [opened])
+    assert results(log, LATER)["NCT1"].outcome == "positive"
+
+
+# --- an analysis that covers disclosures up to a fixed date -------------------------------
+
+
+def test_a_source_disclosed_after_the_date_an_analysis_covers_plays_no_part_in_it():
+    press_release = [adjudicated(adjudicator=who, hazard_ratio=0.7) for who in ("first", "second")]
+    paper = [adjudicated(adjudicator=who, outcome="negative", source_type="paper_or_regulator",
+                         source="https://example.test/paper", disclosed_on=PAPER_DAY) for who in ("first", "second")]
+    log = log_of(press_release + paper)
+    assert results(log, LATER)["NCT1"].outcome == "negative"   # the paper is the more authoritative source
+    covered = results(log, LATER, disclosed_by=PAPER_DAY - dt.timedelta(days=1))["NCT1"]
+    assert (covered.outcome, covered.hazard_ratio, [r.source for r in covered.history]) == ("positive", 0.7, [TOPLINE])
+    assert results(log, LATER, disclosed_by=TOPLINE_DAY - dt.timedelta(days=1)) == {}
+
+
+def test_an_unsettled_source_disclosed_after_that_date_does_not_hold_the_trial_back():
+    press_release = [adjudicated(adjudicator=who) for who in ("first", "second")]
+    paper_read_once = adjudicated(adjudicator="first", source_type="paper_or_regulator",
+                                  source="https://example.test/paper", disclosed_on=PAPER_DAY)
+    log = log_of([*press_release, paper_read_once])
+    assert awaiting_result(log, LATER) == {"NCT1": "awaiting second adjudication"}
+    before_the_paper = PAPER_DAY - dt.timedelta(days=1)
+    assert awaiting_result(log, LATER, disclosed_by=before_the_paper) == {}
+    assert results(log, LATER, disclosed_by=before_the_paper)["NCT1"].outcome == "positive"
+
+
+def test_a_hazard_ratio_is_awaited_or_missing_as_of_the_date_the_analysis_covers():
+    log = log_of([adjudicated(adjudicator=who) for who in ("first", "second")])   # no hazard ratio reported
+    assert results(log, LATER)["NCT1"].hazard_ratio_status == "missing"          # over six months on
+    soon_after = TOPLINE_DAY + dt.timedelta(days=30)
+    assert results(log, LATER, disclosed_by=soon_after)["NCT1"].hazard_ratio_status == "awaited"
+
+
+def test_a_void_trial_is_dated_by_its_earliest_disclosure():
+    stopped = dict(outcome="void", early_stop="no_analysis")
+    log = log_of([adjudicated(adjudicator=who, **stopped) for who in ("first", "second")]
+                 + [adjudicated(adjudicator=who, source="https://example.test/again", disclosed_on=PAPER_DAY, **stopped)
+                    for who in ("first", "second")])
+    assert results(log, LATER)["NCT1"].first_disclosed_on == TOPLINE_DAY
+
+
+# --- the log as it stood ---------------------------------------------------------------------
+
+
+def test_a_log_can_be_cut_back_to_what_it_held_when_an_analysis_was_run():
+    first, second, later = adjudicated(adjudicator="first"), adjudicated(adjudicator="second"), adjudicated(nct="NCT2")
+    opened = ForecastAccess(nct="NCT1", person="first", opened_on=LATER)
+    as_run = AdjudicationLog([first, second], forecast_access=[opened])
+    grown = AdjudicationLog([first, second, later], forecast_access=[opened, opened])
+    assert as_run.sizes() == (2, 0, 0, 1)
+    assert grown.first(as_run.sizes()) == as_run
+    with pytest.raises(ValueError, match="fewer entries"):
+        as_run.first(grown.sizes())
+
+
+def test_a_reading_that_was_not_blind_holds_back_only_an_analysis_that_covers_its_source():
+    press_release = [adjudicated(adjudicator=who) for who in ("first", "second")]
+    opened = [ForecastAccess(nct="NCT1", person=who, opened_on=TOPLINE_DAY + dt.timedelta(days=30)) for who in ("first", "second")]
+    # After the reveal the same two people read the paper: they are no longer blind for it.
+    paper = [adjudicated(adjudicator=who, source_type="paper_or_regulator", source="https://example.test/paper",
+                         disclosed_on=PAPER_DAY) for who in ("first", "second")]
+    log = log_of(press_release + paper, forecast_access=opened)
+    assert awaiting_result(log, LATER) == {"NCT1": "adjudicated after opening the forecasts"}
+    before_the_paper = PAPER_DAY - dt.timedelta(days=1)
+    assert awaiting_result(log, LATER, disclosed_by=before_the_paper) == {}
+    assert results(log, LATER, disclosed_by=before_the_paper)["NCT1"].outcome == "positive"
+
+
+def test_a_reconciliation_cannot_date_a_source_after_the_day_it_was_recorded():
+    with pytest.raises(ValueError, match="disclosed before"):
+        reconciled(disclosed_on=dt.date(2031, 1, 1))

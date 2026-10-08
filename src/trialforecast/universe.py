@@ -99,6 +99,35 @@ def sponsor_type(sponsor_class: str | None) -> str | None:
     return "industry" if sponsor_class == "INDUSTRY" else "non_industry"
 
 
+# Intervention types that can be the drug under test; procedures, devices and imaging cannot.
+DRUG_TYPES = ("DRUG", "BIOLOGICAL", "GENETIC", "COMBINATION_PRODUCT")
+_PARENTHETICAL = re.compile(r"\([^)]*\)")
+_DOSE_ONWARDS = re.compile(r"\s\d[\d.,]*\s*(?:mg|mcg|µg|g|ml|iu|units?)\b.*$")
+
+
+def drug_name(written: str) -> str:
+    """One spelling per drug: lower case, without a parenthetical or a dose."""
+    return " ".join(_DOSE_ONWARDS.sub("", _PARENTHETICAL.sub(" ", written).casefold()).split())
+
+
+def investigational_drug(study: dict) -> str | None:
+    """The drug a trial tests: the first drug the registry lists as given in experimental arms only.
+
+    A default for screening to correct. A backbone given only in the experimental
+    arm can be listed ahead of the drug under test, and a code name is not matched
+    to the name the drug was given later.
+    """
+    arms = study.get("protocolSection", {}).get("armsInterventionsModule", {})
+    experimental = {g.get("label") for g in arms.get("armGroups", []) if g.get("type") == "EXPERIMENTAL"}
+    for intervention in arms.get("interventions", []):
+        given_in = set(intervention.get("armGroupLabels", []))
+        name = intervention.get("name") or ""
+        if (intervention.get("type") in DRUG_TYPES and given_in and given_in <= experimental
+                and "placebo" not in name.lower() and drug_name(name)):
+            return drug_name(name)
+    return None
+
+
 def alias_record(study: dict) -> dict:
     """The names a trial's readout may be announced under, which often differ from the registry's."""
     ps = study.get("protocolSection", {})
@@ -187,6 +216,7 @@ def flatten(study: dict) -> dict:
         "reference_class": f"{its_sponsor_type}/{scored_type}" if its_sponsor_type and scored_type else None,
         # A mention is enough to queue the trial for review; it is not a finding about the design.
         "exclusion_review": "non-inferiority mentioned" if NONINF.search(design_text) else None,
+        "investigational_drug": investigational_drug(study),
         "aliases": json.dumps(alias_record(study), ensure_ascii=False),
         "has_protocol_doc": any(d.get("hasProtocol") for d in docs),
         "has_sap_doc": any(d.get("hasSap") for d in docs),

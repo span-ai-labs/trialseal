@@ -42,6 +42,10 @@ _Avoid_: Terminated, cancelled
 The names a trial's readout may be announced under: its acronym, sponsor study number, other registry numbers, intervention names and code names, and its sponsors.
 _Avoid_: Synonyms, search terms
 
+**Investigational drug**:
+The drug a trial tests, named in one spelling when a forecast is sealed. Trials of the same investigational drug are treated as one group when uncertainty is estimated, because their results tend to move together.
+_Avoid_: Study drug, experimental arm, asset
+
 **Exclusion review**:
 A flag on a candidate whose design may rule it out, such as a mention of non-inferiority, to be settled by a person before it can be eligible.
 _Avoid_: Excluded, filtered out
@@ -150,6 +154,26 @@ _Avoid_: Main cohort, test set
 The past trials whose readouts were traced and adjudicated by hand, from which the base rates are taken.
 _Avoid_: Training set, historical cohort
 
+**Reference**:
+The forecaster a comparison is made against. In the registered primary comparison it is the base rate.
+_Avoid_: Control, benchmark, comparator
+
+**Effect-size baseline**:
+A forecaster that gives every trial of a reference class the same hazard ratio, against which effect-size forecasts are compared.
+_Avoid_: Naive model, null forecast
+
+**Registered plan**:
+Which forecaster carries the claim, its reference, and the effect-size baselines. Every seal carries it from the first, so it cannot be chosen once results are known.
+_Avoid_: Configuration, settings
+
+**Lead time**:
+The days from the batch in which a forecast was sealed to the trial's readout.
+_Avoid_: Horizon, lag
+
+**Sensitivity analysis**:
+The primary comparison repeated with one registered thing changed, such as counting void trials as negative.
+_Avoid_: Robustness check, ablation
+
 **Descriptive look**:
 The single mid-study report of scores on a fixed date, made without testing the registered claim.
 _Avoid_: Interim analysis, checkpoint
@@ -158,9 +182,29 @@ _Avoid_: Interim analysis, checkpoint
 The one test of the registered claim, on a date fixed at registration.
 _Avoid_: Readout, result
 
+**Extension**:
+The single lengthening of the study from 18 to 24 months, made when too few trials can be scored at 18 months. It is decided on a count alone, before anything is scored.
+_Avoid_: Continuation, second look
+
 **Retrospective pilot**:
 Forecasts made without web access on trials whose readout came after a model's training cutoff. It tests the method; it is not the evidence.
 _Avoid_: Backtest, retrospective arm
+
+**Cutoff probe**:
+Asking a model, with no web access, what a past trial showed when given its registry record, for readouts in each month around the training cutoff its provider states.
+_Avoid_: Leakage test, knowledge check
+
+**Memorisation probe**:
+The same question asked with the trial's identifiers alone, so that a right answer can only come from memory.
+_Avoid_: Recall test, contamination check
+
+**Buffer**:
+The months after a model's stated training cutoff that are left out of its pilot, running through the last month in which either probe found it recalling a result.
+_Avoid_: Margin, grace period, washout
+
+**Pilot trial**:
+For one model, a past trial whose readout came after that model's stated training cutoff plus its buffer.
+_Avoid_: Holdout trial, test trial
 
 **Prospective arm**:
 The sealed batches scored against readouts that had not happened when the batch was sealed. It carries the study's claim.

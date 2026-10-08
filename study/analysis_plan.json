@@ -1,0 +1,5 @@
+{
+  "forecaster": "span",
+  "reference": "base_rate",
+  "effect_size_baselines": ["base_rate"]
+}

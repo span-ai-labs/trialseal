@@ -105,7 +105,9 @@ def paired_cluster_bootstrap(score_a, score_b, clusters, n_boot: int = 10_000, s
     pick = rng.integers(0, len(ids), size=(n_boot, len(ids)))
     boot = sums[pick].sum(axis=1) / counts[pick].sum(axis=1)
     lo, hi = np.quantile(boot, [0.025, 0.975])
-    p_two = 2 * min((boot <= 0).mean(), (boot >= 0).mean())
+    # One is added to each count so that a p-value is never reported as zero: resampling
+    # cannot show a probability smaller than one in the number of resamples.
+    p_two = 2 * min((boot <= 0).sum() + 1, (boot >= 0).sum() + 1) / (n_boot + 1)
     return {
         "mean_diff": float(d.mean()),
         "ci_low": float(lo),

@@ -94,3 +94,9 @@ def test_cluster_bootstrap_null_is_not_significant():
     b = a + rng.normal(0.0, 0.05, 200)
     out = s.paired_cluster_bootstrap(a, b, np.arange(200), n_boot=2000)
     assert out["ci_low"] < 0 < out["ci_high"]
+
+
+def test_a_bootstrap_p_value_is_never_reported_as_zero():
+    # Every resample favours a: the p-value can only be said to be below what the resamples can resolve.
+    result = s.paired_cluster_bootstrap([0.0] * 20, [1.0] * 20, list(range(20)), n_boot=999)
+    assert result["p_two_sided"] == pytest.approx(2 / 1000)
