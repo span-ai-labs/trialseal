@@ -122,6 +122,23 @@ def build_batch(
     return Batch(batch_date=batch_date, trials=batch_trials, forecasts=forecasts)
 
 
+def batch_cost(batch: Batch) -> dict[str, dict[str, float | None]]:
+    """What each forecaster's forecasts in a batch cost: tokens in, tokens out, and dollars.
+
+    Dollars are None where a forecaster used tokens that were never priced, so an
+    unknown cost is not mistaken for no cost.
+    """
+    costs = {}
+    for name, forecasts in batch.forecasts.items():
+        unpriced = any(f.cost_usd is None and (f.input_tokens or f.output_tokens) for f in forecasts)
+        costs[name] = {
+            "input_tokens": sum(f.input_tokens or 0 for f in forecasts),
+            "output_tokens": sum(f.output_tokens or 0 for f in forecasts),
+            "cost_usd": None if unpriced else sum(f.cost_usd or 0.0 for f in forecasts),
+        }
+    return costs
+
+
 def write_batch(batch: Batch, root: pathlib.Path) -> pathlib.Path:
     """Write the trials, one record set per forecaster, and a manifest carrying the fingerprint."""
     directory = root / batch.batch_date.isoformat()

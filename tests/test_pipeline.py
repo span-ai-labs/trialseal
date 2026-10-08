@@ -10,7 +10,7 @@ from registry_records import study
 from trialforecast import records, universe
 from trialforecast.adjudication import Adjudication, AdjudicationLog, record_adjudication
 from trialforecast.analysis import primary_comparison
-from trialforecast.batch import InvalidForecast, TamperedBatch, build_batch, read_batch, write_batch
+from trialforecast.batch import InvalidForecast, TamperedBatch, batch_cost, build_batch, read_batch, write_batch
 from trialforecast.forecasting import BaseRateForecaster, Forecast
 from trialforecast.screening import IneligibleTrial, ScreeningRecord, eligible_trials
 
@@ -286,6 +286,37 @@ def test_a_forecast_issued_on_or_after_the_readout_is_reported_and_not_scored():
                                 analysis_date=ANALYSIS_DATE)
     assert result["n_trials"] == 1
     assert result["forecast_not_before_readout"] == ["NCT2"]
+
+
+class Unanswering(FixedForecaster):
+    """A stand-in forecaster that produces no forecast, as a model does when its runs fail."""
+
+    def forecast(self, candidate, batch_date):
+        return Forecast(nct=candidate["nct"], forecaster=self.name, version=self.version, batch_date=batch_date,
+                        probability_positive=None, hazard_ratio=None, hazard_ratio_low=None, hazard_ratio_high=None,
+                        no_forecast="every run refused", input_tokens=4500, output_tokens=0, cost_usd=0.018)
+
+
+def test_a_record_of_no_forecast_is_kept_in_the_batch_and_scored_at_the_reference(tmp_path):
+    trials = [candidate("NCT1")]
+    log = [screened("NCT1", "eligible")]
+    batch = build_batch(BATCH_1, trials, log, [base_rate(), Unanswering("stand_in", 0.0)])
+    assert read_batch(write_batch(batch, tmp_path)) == batch
+    result = primary_comparison([batch], AdjudicationLog(both_adjudicated("NCT1", "positive")), forecaster="stand_in",
+                                reference="base_rate", analysis_date=ANALYSIS_DATE)
+    # Declining to forecast earns exactly the reference's score, never a better one.
+    assert result["n_trials"] == 1 and result["no_forecast"] == ["NCT1"]
+    assert result["brier"]["stand_in"] == result["brier"]["base_rate"] == pytest.approx(0.2025)
+
+
+def test_the_cost_of_a_batch_is_totalled_per_forecaster():
+    trials = [candidate("NCT1"), candidate("NCT2")]
+    log = [screened("NCT1", "eligible"), screened("NCT2", "eligible")]
+    batch = build_batch(BATCH_1, trials, log, [base_rate(), Unanswering("stand_in", 0.0)])
+    assert batch_cost(batch) == {
+        "base_rate": {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
+        "stand_in": {"input_tokens": 9000, "output_tokens": 0, "cost_usd": pytest.approx(0.036)},
+    }
 
 
 # --- the whole path, through files, with no network --------------------------------

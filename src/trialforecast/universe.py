@@ -177,6 +177,7 @@ def flatten(study: dict) -> dict:
             f'{i.get("type", "")}: {i.get("name", "")}' for i in arms.get("interventions", [])
         ),
         "n_arms": len(arms.get("armGroups", [])),
+        "arms": "; ".join(f'{g.get("type", "")}: {g.get("label", "")}' for g in arms.get("armGroups", [])),
         "primary_outcomes": prim_text,
         "primary_time_frames": " | ".join(str(o.get("timeFrame", "")) for o in prim),
         "n_primary_outcomes": len(prim),

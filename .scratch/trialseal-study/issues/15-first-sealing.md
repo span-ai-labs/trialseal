@@ -18,3 +18,5 @@
 ## Comments
 
 **2026-10-08, from ticket 06.** Sealing takes the two services from `study/anchors.json` (written by the setup wizard) and the registration from `study/registration.json`; this ticket wires them into a command. A batch can only be sealed on its own date. The OpenTimestamps anchor is incomplete at sealing: it reaches the block chain some hours later and must then be upgraded with the official client (`ots upgrade`) and the upgraded file published. The private openings are written under `private/`, which git ignores and which has no backup yet; losing them would make every forecast in the batch unrevealable.
+
+**2026-10-08, from ticket 08.** `model_forecasters(study/models.json)` gives one forecaster per model; keys load with `load_keys(.env)`. A wrong key or model name raises `ModelUnavailable` and stops the batch, so a long batch should save each forecaster's forecasts as it goes, or paid work is lost. Check the Google key's billing before the first batch: Gemini returned capacity and quota errors on 2026-10-08.

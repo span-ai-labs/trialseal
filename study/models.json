@@ -1,0 +1,32 @@
+[
+  {
+    "provider": "anthropic",
+    "model": "claude-opus-5-5",
+    "training_cutoff": "2026-06",
+    "released_on": "2026-09-21",
+    "effort": "high",
+    "input_usd_per_million": 4.0,
+    "output_usd_per_million": 20.0,
+    "stated_at": "https://platform.claude.com/docs/en/about-claude/models/overview (training data cutoff Jun 2026; read 2026-10-08). Release date from the provider's models API."
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-6.1-sol",
+    "training_cutoff": "2026-04-30",
+    "released_on": "2026-09-28",
+    "effort": "high",
+    "input_usd_per_million": 2.0,
+    "output_usd_per_million": 10.0,
+    "stated_at": "https://developers.openai.com/api/docs/models/gpt-6.1-sol (knowledge cutoff Apr 30, 2026; read 2026-10-08). Release date from the provider's models API."
+  },
+  {
+    "provider": "google",
+    "model": "gemini-3.8-flash",
+    "training_cutoff": "2026-03",
+    "released_on": "2026-09-02",
+    "effort": null,
+    "input_usd_per_million": 0.75,
+    "output_usd_per_million": 3.75,
+    "stated_at": "https://deepmind.google/models/model-cards/gemini-3-8-flash/ (knowledge cutoff March 2026, some domains January 2025; published 2 September 2026; read 2026-10-08). Prices from https://ai.google.dev/gemini-api/docs/pricing, valid through 2026-12-31."
+  }
+]

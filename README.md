@@ -12,6 +12,7 @@ Vocabulary is in `CONTEXT.md`, decisions in `docs/adr/`, the spec and tickets in
 - `scripts/snapshot_universe.py` — pull a time-stamped superset of candidate trials from the ClinicalTrials.gov API into `snapshots/<dataTimestamp>/`.
 - `src/trialforecast/universe.py` — flatten a snapshot into candidates (time-to-event primary endpoint, not withdrawn), each with its scored endpoint, reference class, alias record and any exclusion-review tag; writes `data/universe/`.
 - `src/trialforecast/forecasting.py` — the forecast shape, the contract every forecaster meets, and the base-rate forecaster.
+- `src/trialforecast/models.py` — frontier models as shipped: the prompt every model sees, one adapter per provider's own library, each trial asked about several times and the answers combined by a fixed rule, and everything recorded with the forecast. The models are listed in `study/models.json`.
 - `src/trialforecast/screening.py` — screening records and which candidates are eligible.
 - `src/trialforecast/batch.py` — builds a batch (refusing any trial not screened as eligible), fingerprints it, writes and reads it.
 - `src/trialforecast/adjudication.py` — adjudications of each source, reconciliations, and the rules that turn them into a trial's result (source ranking, readout date, hazard-ratio window, blindness).
@@ -72,6 +73,6 @@ uv run trialseal-verify seals/2026-11-02 revealed/NCT00000000.jsonl
 ## Status
 
 Built: snapshot, candidate universe, scoring, the record pipeline (screening, base-rate forecaster,
-batches, adjudication rules, primary comparison), and sealing with reveal verification. Not built
-yet: real screening, the reference set, the other forecasters, readout detection, the reveal step
-and scoreboard, the full analysis plan. Nothing has been registered or sealed.
+batches, adjudication rules, primary comparison), sealing with reveal verification, and frontier models as forecasters. Not built yet: real
+screening, the reference set, the statistical baselines and the Span forecaster, readout
+detection, the reveal step and scoreboard, the full analysis plan. Nothing has been registered or sealed.

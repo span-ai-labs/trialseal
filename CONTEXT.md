@@ -57,7 +57,7 @@ _Avoid_: Main endpoint, key endpoint
 ### Forecasts
 
 **Forecast**:
-For one eligible trial, a probability that it will be a positive trial and a predicted hazard ratio with an interval for its scored endpoint.
+For one eligible trial, a probability that it will be a positive trial and a predicted hazard ratio with an interval for its scored endpoint. Where a forecaster could not produce one, the forecast is the record of that, with the reason.
 _Avoid_: Prediction, call, bet
 
 **Forecaster**:

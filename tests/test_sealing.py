@@ -137,15 +137,21 @@ def test_an_altered_reveal_is_rejected():
 
 
 def test_a_reveal_must_be_the_exact_line_that_was_committed_to():
-    # A line with a repeated key reads as a different forecast from the one a reader would first see.
-    line = ('{"batch_date":"2026-11-02","forecaster":"stand_in","hazard_ratio":0.8,"hazard_ratio_high":1.05,'
-            '"hazard_ratio_low":0.6,"nct":"NCT1","probability_positive":0.8,"probability_positive":0.05,"version":"1"}')
-    opening = Opening(forecaster="stand_in", nct="NCT1", salt="11" * 32, line=line)
     original = sealed().seal
+    honest = records.to_line(StandIn().forecast({"nct": "NCT1"}, BATCH_1))
+    # The same line with one key repeated: a reader sees 0.8 first, a parser keeps the last, 0.05.
+    line = honest.replace('"probability_positive":0.8', '"probability_positive":0.8,"probability_positive":0.05')
+    assert line != honest
+    opening = Opening(forecaster="stand_in", nct="NCT1", salt="11" * 32, line=line)
     seal = dataclasses.replace(original, commitments={
         **original.commitments, "stand_in": {**original.commitments["stand_in"], "NCT1": opening.commitment}})
     with pytest.raises(NotInSeal, match="canonical"):
         verify_opening(opening, seal)
+    # The honest line under the same commitment scheme does verify, so it is the repetition that is refused.
+    honest_opening = Opening(forecaster="stand_in", nct="NCT1", salt="11" * 32, line=honest)
+    honest_seal = dataclasses.replace(original, commitments={
+        **original.commitments, "stand_in": {**original.commitments["stand_in"], "NCT1": honest_opening.commitment}})
+    assert verify_opening(honest_opening, honest_seal).probability_positive == 0.8
 
 
 def test_anyone_can_check_a_reveal_from_the_command_line(tmp_path, capsys):

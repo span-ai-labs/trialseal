@@ -325,6 +325,9 @@ def verify_command(arguments: list[str] | None = None, services: Iterable[Timest
             return 1
         for opening in openings:
             forecast = verify_opening(opening, seal)
+            if forecast.no_forecast:
+                print(f"  VERIFIED {forecast.forecaster} {forecast.nct}: no forecast produced ({forecast.no_forecast})")
+                continue
             print(f"  VERIFIED {forecast.forecaster} {forecast.nct}: probability {forecast.probability_positive}, "
                   f"hazard ratio {forecast.hazard_ratio} ({forecast.hazard_ratio_low} to {forecast.hazard_ratio_high})")
     except (NotInSeal, ValueError, TypeError, KeyError) as problem:
