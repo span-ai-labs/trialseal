@@ -49,3 +49,7 @@
 6. A design ruling does not go stale; the latest stands; a ruling to exclude holds for any candidate, tagged or not. The same gate is applied when a batch is built and when it is sealed.
 7. Candidates are searched if their registry completion date is within 24 months either side of the day.
 8. The investigational drug recorded at screening, by a decision that stands, replaces the registry's default when a batch is built.
+
+**2026-10-09, second review.** A second adversarial pass found the first round closed and a narrower set, fixed with tests: confirming a queue row now matches the whole row, not the trial alone; a report that a trial read out cannot be overruled while another such report for the same trial is unmarked; a search dated in the future or more than 14 days back is refused on import; the drug correction comes from the latest search that stands; a waiting record for a trial no longer in the snapshot still shows in the queue.
+
+**Known limits.** `build_batch` takes design rulings as an argument and defaults to none; sealing is the gate that always has them. `exclusion_review` was added to the sealed line for a trial, so a batch sealed before today would not read back; none has been sealed.

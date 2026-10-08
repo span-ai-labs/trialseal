@@ -378,7 +378,12 @@ def test_findings_that_cannot_be_read_or_are_dated_ahead_are_refused_without_a_t
     good = {"nct": "NCT0001", "decision": "eligible", "confidence": "high", "evidence": "searched"}
     path = write_findings(study_dir, [good])
     assert run(study_dir, "import", str(path), "--screened-by", "agent", "--screened-on", "2026-10-10") == 1
-    assert "after today" in capsys.readouterr().out
+    assert "never before" in capsys.readouterr().out
+    # Nor is a search entered long after it is said to have been made: its date could be chosen to suit.
+    assert run(study_dir, "import", str(path), "--screened-by", "agent", "--screened-on", "2026-09-24") == 1
+    assert "within 14 days of being made" in capsys.readouterr().out
+    assert run(study_dir, "import", str(path), "--screened-by", "agent", "--screened-on", "2026-09-25") == 0
+    (study_dir / "screening" / "screening.jsonl").unlink()
     path.write_text(path.read_text() + "NCT0002,eligible,high,searched,,,,an extra cell\n")
     assert run(study_dir, "import", str(path), "--screened-by", "agent") == 1
     assert "more cells than the header" in capsys.readouterr().out and screening_log(study_dir) == []
@@ -456,3 +461,73 @@ def test_the_list_of_readouts_gives_the_earliest_date_found_and_whether_a_trace_
     run(study_dir, "summary")
     (row,) = table(study_dir / "results" / "screening" / "read_out.csv")
     assert (row["nct"], row["readout_date"], row["source"], row["traced"]) == ("NCT0007", "2025-11-03", "https://example.test/topline", "no")
+
+
+def doubtful(nct, readout, link, evidence="a hint in a filing"):
+    return {"nct": nct, "decision": "already_read_out", "confidence": "low", "evidence": evidence,
+            "evidence_links": link, "readout_date": readout}
+
+
+def mark_queue(study_dir, marks):
+    """The study lead marks rows of the queue, chosen by trial and readout date."""
+    path = study_dir / "results" / "screening" / "queue.csv"
+    rows = table(path)
+    for row in rows:
+        row.update(marks.get((row["nct"], row["readout_date"]), {}))
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    return path
+
+
+def test_overruling_one_report_does_not_sweep_away_another_the_study_lead_has_not_seen(study_dir, capsys):
+    run(study_dir, "import", str(write_findings(study_dir, [doubtful("NCT0001", "2026-08-01", "https://example.test/filing")])), "--screened-by", "agent")
+    run(study_dir, "summary")
+    queue = mark_queue(study_dir, {("NCT0001", "2026-08-01"): {"confirm": "no", "note": "the filing is about another trial"}})
+    # Before the marks come back, a second report arrives: a congress abstract.
+    next_day = TODAY + dt.timedelta(days=1)
+    second = doubtful("NCT0001", "2026-10-09", "https://example.test/abstract", "a congress abstract")
+    run(study_dir, "import", str(write_findings(study_dir, [second], "second.csv")), "--screened-by", "agent", today=next_day)
+    capsys.readouterr()
+    assert run(study_dir, "confirm", str(queue), "--by", LEAD, today=next_day) == 1
+    assert "another report is waiting" in capsys.readouterr().out and len(screening_log(study_dir)) == 2
+
+
+def test_a_mark_finds_its_own_report_among_several_alike(study_dir):
+    alike = [doubtful("NCT0001", "2026-09-01", "https://example.test/one"), doubtful("NCT0001", "2026-10-05", "https://example.test/two")]
+    run(study_dir, "import", str(write_findings(study_dir, alike)), "--screened-by", "agent")
+    run(study_dir, "summary")
+    queue = mark_queue(study_dir, {("NCT0001", "2026-09-01"): {"confirm": "yes"}})
+    assert run(study_dir, "confirm", str(queue), "--by", LEAD) == 0
+    assert (screening_log(study_dir)[-1].readout_date, screening_log(study_dir)[-1].confirmed_by) == (dt.date(2026, 9, 1), LEAD)
+
+
+def test_a_finding_of_nothing_marked_no_goes_on_waiting(study_dir, capsys):
+    unsure = {"nct": "NCT0001", "decision": "eligible", "confidence": "medium", "evidence": "searched"}
+    run(study_dir, "import", str(write_findings(study_dir, [unsure])), "--screened-by", "agent")
+    run(study_dir, "summary")
+    queue = mark_queue(study_dir, {("NCT0001", ""): {"confirm": "no"}})
+    capsys.readouterr()
+    assert run(study_dir, "confirm", str(queue), "--by", LEAD) == 0
+    assert '1 finding of nothing marked "no" left waiting' in capsys.readouterr().out and len(screening_log(study_dir)) == 1
+
+
+def test_what_waits_for_a_trial_that_has_left_the_snapshot_is_still_queued(study_dir):
+    records.append(study_dir / "screening" / "screening.jsonl",
+                   screened("NCT0099", "already_read_out", on=dt.date(2026, 10, 1), confidence="low"))
+    run(study_dir, "summary")
+    assert [r["nct"] for r in table(study_dir / "results" / "screening" / "queue.csv")] == ["NCT0099"]
+
+
+def test_the_latest_standing_correction_of_a_drug_is_the_one_used_whatever_order_it_was_entered_in():
+    newer = screened("NCT1", "eligible", on=dt.date(2026, 11, 1), investigational_drug="examplumab")
+    older = screened("NCT1", "eligible", on=dt.date(2026, 10, 25), investigational_drug="otherinib")
+    for entered in ([older, newer], [newer, older]):
+        assert build_batch(BATCH_1, [candidate("NCT1")], entered, [base_rate()]).trials[0].investigational_drug == "examplumab"
+
+
+def test_a_log_line_that_is_not_a_record_stops_the_command_without_a_traceback(study_dir, capsys):
+    (study_dir / "screening").mkdir()
+    (study_dir / "screening" / "screening.jsonl").write_text('{"nct": "NCT0001", "unexpected": true}\n')
+    assert run(study_dir, "summary") == 1 and "NOT DONE" in capsys.readouterr().out

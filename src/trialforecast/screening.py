@@ -237,12 +237,16 @@ def require_eligible(
 
 
 def corrected_drugs(log: Iterable[ScreeningRecord], batch_date: dt.date) -> dict[str, str]:
-    """The investigational drug screening recorded for each trial, where the registry's default needed correcting."""
-    corrected = {}
+    """The investigational drug screening recorded for each trial, where the registry's default needed correcting.
+
+    It is taken from the latest search that stands and names a drug, whatever order the records were entered in.
+    """
+    latest: dict[str, ScreeningRecord] = {}
     for record in log:
         if record.investigational_drug and record.stands and record.screened_on <= batch_date:
-            corrected[record.nct] = record.investigational_drug
-    return corrected
+            if record.nct not in latest or record.screened_on >= latest[record.nct].screened_on:
+                latest[record.nct] = record
+    return {nct: record.investigational_drug for nct, record in latest.items()}
 
 
 def found_no_result(log: Iterable[ScreeningRecord], on_or_after: dt.date, by: dt.date) -> set[str]:
@@ -288,6 +292,10 @@ def screening_summary(
         # A design ruling does not go stale, so every tagged candidate still in play is queued, screened or not.
         if design == AWAITING_DESIGN_REVIEW and screening not in (READ_OUT, VOID):
             design_queue.append(candidate)
+    # A sealed trial is screened again after it has left the snapshot; what waits for it is queued all the same.
+    for nct in sorted(set(by_trial) - {c["nct"] for c in candidates}):
+        if status.get(nct) == AWAITING_CONFIRMATION:
+            queue += _unanswered(by_trial[nct]) or [_latest(by_trial[nct])]
     return {
         "counts": {name: len(found) for name, found in places.items()},
         "eligible": places[ELIGIBLE],

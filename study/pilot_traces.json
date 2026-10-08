@@ -1,6 +1,6 @@
-[
-  "trace_A.csv",
-  "trace_B.csv",
-  "trace_C1.csv",
-  "trace_C2.csv"
-]
+{
+  "trace_A.csv": "66526d56451129e9c712419529878d4562f56c2e5fc764223e84e66f569d3206",
+  "trace_B.csv": "527ceb83e526ebaaf8de6bc899ad4ec564e689abf4f3e81c668e95677ee23685",
+  "trace_C1.csv": "92246fa0422e30d850c21bd1d6d4fc1cea3849b083a9f18573661a157a7ce22f",
+  "trace_C2.csv": "1c5b25e934c76ed4b9f85e84cd4325ac0e0aa6cfe5f57a4090eb1564deb07fb0"
+}

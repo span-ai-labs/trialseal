@@ -5,6 +5,7 @@ Every module that uses a trace reads it here, so that a traced row means one thi
 from __future__ import annotations
 
 import datetime as dt
+import math
 import pathlib
 from dataclasses import dataclass
 from typing import Iterable
@@ -69,8 +70,8 @@ def _traced(row: dict, traced_in: str) -> TracedRow:
             value = float(row["hr_value"])
         except ValueError as unreadable:
             raise ValueError(f"{nct}: hazard ratio {row['hr_value']!r} is not a number") from unreadable
-        if value <= 0:
-            raise ValueError(f"{nct}: hazard ratio {value} must be positive")
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"{nct}: hazard ratio {row['hr_value']!r} must be a positive, finite number")
         if readout <= public_on <= add_months(readout, HAZARD_RATIO_WINDOW_MONTHS):
             hazard_ratio = value
     confidence = row.get("confidence", "").casefold()

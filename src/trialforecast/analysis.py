@@ -25,7 +25,7 @@ from scipy.stats import norm
 from trialforecast import records, scoring
 from trialforecast.adjudication import (
     HAZARD_RATIO_WINDOW_MONTHS, LOG_KINDS, WITH_READOUT, AdjudicationLog, TrialResult, awaiting_result, entered_on,
-    results, set_aside,
+    results, set_aside, unsettled_sources,
 )
 from trialforecast.batch import Batch, BatchTrial
 from trialforecast.dates import add_months
@@ -441,6 +441,7 @@ def log_hazard_ratio(forecast: Forecast) -> tuple[float, float, float, float]:
 def effect_size_comparison(
     state: StudyState, forecaster: str, baseline: str, sponsor_type: str | None = PRIMARY_ANALYSIS_SET,
     n_boot: int = RESAMPLES, missing_as_no_effect: bool = False, hazard_ratios_from: StudyState | None = None,
+    read_blind: StudyState | None = None,
 ) -> dict:
     """Hazard-ratio forecasts against a baseline's, on first forecasts, scored on the log scale.
 
@@ -456,18 +457,24 @@ def effect_size_comparison(
     another state: one that counts sources set aside for the outcome, since a
     hazard ratio is a number copied from a source and is used whoever read it
     (ADR-0015); and, for the follow-up, the study as it stands six months after
-    the final analysis (ADR-0014).
+    the final analysis (ADR-0014). `read_blind` is the study at that same date
+    without the sources set aside: a hazard ratio it does not give was read by
+    someone who had opened the forecasts, and the trial is listed as such.
     """
     later = hazard_ratios_from or state
+    blind = read_blind or state
+
+    def as_seen_in(other: StudyState, pair: Pair) -> TrialResult:
+        seen = other.results.get(pair.trial.nct)
+        # A later reading may have made the trial void, or held it back: it is scored on what the analysis saw.
+        return pair.result if seen is None or seen.readout_date is None else seen
+
     comparison = paired(state, forecaster, baseline, sponsor_type=sponsor_type)
     left_out: dict[str, list[str]] = {"awaited": [], "missing": [], "another_endpoint": []}
     scored, observed, read_after_reveal = [], [], []
     for pair in comparison.pairs:
-        seen_later = later.results.get(pair.trial.nct)
-        if seen_later is None or seen_later.readout_date is None:  # a later reading may have made the trial void
-            seen_later = pair.result
-        hazard_ratio, status = scored_hazard_ratio(seen_later, pair.trial, later.readouts_to)
-        if hazard_ratio is not None and scored_hazard_ratio(pair.result, pair.trial, later.readouts_to)[0] != hazard_ratio:
+        hazard_ratio, status = scored_hazard_ratio(as_seen_in(later, pair), pair.trial, later.readouts_to)
+        if hazard_ratio is not None and scored_hazard_ratio(as_seen_in(blind, pair), pair.trial, later.readouts_to)[0] != hazard_ratio:
             read_after_reveal.append(pair.trial.nct)
         if hazard_ratio is None:
             left_out[status].append(pair.trial.nct)
@@ -490,7 +497,7 @@ def effect_size_comparison(
         "coverage": {name: _mean(each) for name, each in covered.items()},
         "difference": _difference(crps[forecaster], crps[baseline], scored, n_boot),
         "scored_at_baseline": {p.trial.nct: comparison.scored_at_reference[p.trial.nct] for p in scored if p.own is None},
-        "hazard_ratio_read_after_reveal": read_after_reveal if later.set_aside == {} and later is not state else [],
+        "hazard_ratio_read_after_reveal": read_after_reveal,
         "hazard_ratio_awaited": left_out["awaited"],
         "hazard_ratio_missing": left_out["missing"],
         "hazard_ratio_for_another_endpoint": left_out["another_endpoint"],
@@ -563,6 +570,7 @@ class AnalysisRecord:
     resamples: int
     inputs_sha256: str
     outputs_sha256: str
+    hazard_ratios_searched_on: dt.date | None = None  # the follow-up only: when the search it rests on was finished
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "batches", tuple(self.batches))
@@ -719,10 +727,11 @@ def _require_every_trial_accounted_for(
                        f"{run_on} that found no public result: {', '.join(unaccounted)}")
 
 
-def _effect_sizes(scored: StudyState, hazard_ratios_from: StudyState, plan: Plan, n_boot: int) -> dict:
+def _effect_sizes(scored: StudyState, hazard_ratios_from: StudyState, read_blind: StudyState, plan: Plan, n_boot: int) -> dict:
     """The effect-size comparison against each baseline, as reported and with missing hazard ratios counted as no effect."""
     def against(baseline: str, **options) -> dict:
-        return effect_size_comparison(scored, plan.forecaster, baseline, n_boot=n_boot, hazard_ratios_from=hazard_ratios_from, **options)
+        return effect_size_comparison(scored, plan.forecaster, baseline, n_boot=n_boot, hazard_ratios_from=hazard_ratios_from,
+                                      read_blind=read_blind, **options)
 
     return {"effect_size": {baseline: against(baseline) for baseline in plan.effect_size_baselines},
             "effect_size_missing_as_no_effect": {baseline: against(baseline, missing_as_no_effect=True)
@@ -792,7 +801,7 @@ def final_analysis(
         "primary": primary,
         "forecasters": forecaster_scores(state, plan.reference),
         "forecasters_all_sponsors": forecaster_scores(state, plan.reference, sponsor_type=ALL_SPONSORS),
-        **_effect_sizes(state, with_set_aside, plan, resamples),
+        **_effect_sizes(state, with_set_aside, state, plan, resamples),
         "sensitivity": sensitivity_analyses(state, with_set_aside, plan.forecaster, plan.reference, resamples),
         "set_aside": dict(state.set_aside),
         "lead_time": by_lead_time(state, plan.forecaster, plan.reference),
@@ -825,7 +834,10 @@ def effect_size_follow_up(
 
     Like the others it is made once, so it must not be made on a search that is
     not finished: the first run needs the day on which the search for hazard
-    ratios was completed, which must be on or after the date it covers.
+    ratios was completed, which must be on or after the date it covers, and it
+    waits while any source of a trial it scores has been read by one adjudicator
+    alone or by two who differ. That covers sources set aside for the outcome,
+    since a hazard ratio is taken from those too (ADR-0015).
     """
     batches = in_date_order(batches)
     history = _history(record_file, batches, log)
@@ -843,18 +855,21 @@ def effect_size_follow_up(
     now = study_state(batches, log, run_on, hazard_ratios_to, count_set_aside=True)
     inputs = _inputs_fingerprint(now, log, plan)
     _require_unchanged(earlier, _INPUTS, earlier and earlier.inputs_sha256, inputs)
+    searched = earlier.hazard_ratios_searched_on if earlier else hazard_ratios_searched_on
     if earlier is None:
-        searched = hazard_ratios_searched_on
         if searched is None or not hazard_ratios_to <= searched <= today:
             raise NotReady(f"say when the search for hazard ratios disclosed by {hazard_ratios_to} was finished: "
                            f"a day from {hazard_ratios_to} to today")
         unsettled = {nct: why for nct, why in awaiting_result(log, run_on, hazard_ratios_to).items() if nct in scored_then.results}
+        unsettled.update({nct: ", ".join(sources) for nct, sources in unsettled_sources(log, run_on, hazard_ratios_to).items()
+                          if nct in scored_then.results and nct not in unsettled})
         if unsettled:
-            raise NotReady("adjudication is not settled for: " + ", ".join(f"{nct} ({why})" for nct, why in unsettled.items()))
+            raise NotReady("adjudication is not settled for: " + ", ".join(f"{nct} ({why})" for nct, why in sorted(unsettled.items())))
     resamples = earlier.resamples if earlier else n_boot
 
+    read_blind = study_state(batches, log, run_on, hazard_ratios_to)
     follow_up = {"kind": FOLLOW_UP, "run_on": run_on, "readouts_to": final.readouts_to, "hazard_ratios_to": hazard_ratios_to,
-                 **_effect_sizes(scored_then, now, plan, resamples)}
+                 "hazard_ratios_searched_on": searched, **_effect_sizes(scored_then, now, read_blind, plan, resamples)}
     scored_in_final = paired(scored_then, plan.forecaster, plan.reference).pairs
     extended = any(r.kind == EXTENSION for r in history)
     if not _claim_can_be_tested(len(scored_in_final), len({p.drug_group for p in scored_in_final}), extended):
@@ -863,5 +878,5 @@ def effect_size_follow_up(
     _require_unchanged(earlier, _OUTPUTS, earlier and earlier.outputs_sha256, outputs)
     if earlier is None:
         records.append(record_file, AnalysisRecord(FOLLOW_UP, run_on, final.readouts_to, final.n_trials, _fingerprints(batches),
-                                                   log.sizes(), resamples, inputs, outputs))
+                                                   log.sizes(), resamples, inputs, outputs, searched))
     return follow_up

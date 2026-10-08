@@ -51,3 +51,5 @@
 9. Scores without the trials a model said it knew are shown only when at least 3 trials are removed and at least 3 remain.
 
 **Known limits.** The pilot is small because the models are new: there are few months between a stated cutoff and today. A wider but less clean estimate of the spread is possible from every readout after a model's last month of recall (about 30 trials for each model) and has not been run. The first wording of the probes (version 1) is kept in the private files and is not counted.
+
+**2026-10-09.** `study/pilot_traces.json` now records each trace file with its SHA-256, and the pilot refuses to run if one has changed or gone. The four files are as they were when the pilot was begun.

@@ -17,6 +17,7 @@ import argparse
 import csv
 import dataclasses
 import datetime as dt
+import hashlib
 import json
 import math
 import pathlib
@@ -618,16 +619,25 @@ def _pilot_traces(root: pathlib.Path, starting: bool) -> list[pathlib.Path]:
     """The trace files the pilot rests on: those that existed when it was begun, recorded then and kept to since.
 
     Trials traced later would each need both probes before any model's buffer could
-    be chosen again, so they join only when the list is deliberately redrawn.
+    be chosen again, so they join only when the list is deliberately redrawn. Each
+    file is recorded with its SHA-256: the probes were scored against what the
+    trace said then, so a trace edited since is refused rather than quietly used.
+    A later finding about a traced trial belongs in the adjudication log.
     """
-    listed = root / PILOT_TRACES
+    listed, traces = root / PILOT_TRACES, root / "data" / "readout_trace"
     if not listed.exists():
         if not starting:
             raise ValueError("the pilot has not been begun: run its probe step first")
-        names = sorted(path.name for path in (root / "data" / "readout_trace").glob("trace_*.csv"))
+        begun_on = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(traces.glob("trace_*.csv"))}
         listed.parent.mkdir(parents=True, exist_ok=True)
-        listed.write_text(json.dumps(names, indent=2) + "\n", encoding="utf-8")
-    return [root / "data" / "readout_trace" / name for name in json.loads(listed.read_text(encoding="utf-8"))]
+        listed.write_text(json.dumps(begun_on, indent=2) + "\n", encoding="utf-8")
+    begun_on = json.loads(listed.read_text(encoding="utf-8"))
+    for name, digest in begun_on.items():
+        if not (traces / name).exists():
+            raise ValueError(f"{name}, which the pilot was begun on, is no longer in {traces}")
+        if hashlib.sha256((traces / name).read_bytes()).hexdigest() != digest:
+            raise ValueError(f"{name} has changed since the pilot was begun on it")
+    return [traces / name for name in begun_on]
 
 
 def _require_priced(spec: ModelSpec) -> None:
@@ -766,7 +776,7 @@ def main(
     except ProviderDown as down:
         print(down)
         return 3
-    except (ProbesIncomplete, ModelUnavailable, ValueError, LookupError) as problem:
+    except (ProbesIncomplete, ModelUnavailable, ValueError, LookupError, OSError) as problem:
         print(f"NOT DONE: {problem}")
         return 1
     finally:

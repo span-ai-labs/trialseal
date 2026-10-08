@@ -696,9 +696,17 @@ def test_the_pilot_keeps_to_the_traces_it_was_begun_on(pilot_dir, capsys):
     assert run("forecast", pilot_dir, Scripted()) == 1 and "has not been begun" in capsys.readouterr().out
     model = Scripted()
     assert run("probe", pilot_dir, model) == 0
-    assert json.loads((pilot_dir / "study" / "pilot_traces.json").read_text()) == ["trace_A.csv"]
+    assert list(json.loads((pilot_dir / "study" / "pilot_traces.json").read_text())) == ["trace_A.csv"]
     # Another tranche is traced afterwards. It does not join the pilot, whose probes would otherwise be incomplete.
     (pilot_dir / "data" / "readout_trace" / "trace_B.csv").write_text(
         "nct,disclosed,first_disclosure_date,primary_result,hr_value,hr_first_public_date\nNCT0021,yes,2026-09-20,met,,\n")
     assert run("probe", pilot_dir, model) == 0 and len(model.probes) == 44
     assert run("forecast", pilot_dir, model) == 0
+    # Nor may a trace the pilot rests on be edited under it: the probes were scored against what it said then.
+    begun_on = pilot_dir / "data" / "readout_trace" / "trace_A.csv"
+    begun_on.write_text(begun_on.read_text() + "\n")
+    capsys.readouterr()
+    assert run("report", pilot_dir, model) == 1
+    assert "NOT DONE: trace_A.csv has changed since the pilot was begun on it" in capsys.readouterr().out
+    begun_on.unlink()
+    assert run("report", pilot_dir, model) == 1 and "NOT DONE: trace_A.csv" in capsys.readouterr().out

@@ -44,3 +44,15 @@
 5. The adjudicators' sample is 40 trials, drawn once with a fixed seed from trials traced as read out or void.
 6. The trace is compared with the adjudicators on outcome and on readout date within a week.
 7. A sample of 56 trials that are not industry-led was traced, rather than all 305.
+
+**2026-10-09, second review.** Fixed with tests:
+
+- The sample is not drawn while any trace awaits a re-check, and it records the trials it was drawn from. Freezing refuses if a trial joined the reference set after the draw.
+- Freezing refuses if the trace had the outcome right for fewer than nine in ten of the trials the adjudicators read (rule 8 below), and records the trace's accuracy in the frozen file.
+- A sampled trial that has since left the reference set (a re-check found no readout) no longer blocks freezing.
+- The frozen file records a SHA-256 of every trace, re-check, reference adjudication and design ruling it was made from. The base-rate forecaster refuses to load if any has changed.
+- A hazard ratio that is not a finite positive number is refused when a trace is read.
+
+8. *(rule, to confirm)* Nine in ten is my number for how often the trace must match the adjudicators before the unread traces are relied on. Below it, the adjudicators read every trace.
+
+**Known limit.** A traced hazard ratio is matched to the scored endpoint by type (overall survival, progression-type), not by the endpoint's exact words; the adjudicated ones are matched exactly.

@@ -38,6 +38,9 @@ NOT_YET_COUNTED = (IN_DOUBT, AWAITING_RECHECK, AWAITING_DESIGN_REVIEW)
 MINIMUM_CLASS_TRIALS = 20  # a reference class with fewer clear results takes its sponsor type's base rate
 MINIMUM_CLASS_HAZARD_RATIOS = 10  # and one with fewer hazard ratios takes its sponsor type's typical hazard ratio
 SAMPLE_SIZE, SAMPLE_SEED = 40, 20261009  # the adjudicators' sample is one draw, kept once made
+# If the adjudicators contradict the trace on more of their sample than this allows, the traces they did not read
+# cannot be relied on, and nothing is frozen until they have read those too.
+TRACE_ACCURACY_NEEDED = 0.9
 REFERENCE_ADJUDICATION = pathlib.Path("adjudication") / "reference"
 SAMPLE = REFERENCE_ADJUDICATION / "sample.json"
 FROZEN = pathlib.Path("study") / "base_rates.json"
@@ -222,16 +225,34 @@ def frozen_base_rates(trials: Iterable[ReferenceTrial], frozen_on: dt.date) -> d
             "pooled": sorted(pooled), "hazard_ratios_pooled": sorted(pooled_ratios), "counts": counts}
 
 
-def base_rate_forecaster(frozen: pathlib.Path) -> BaseRateForecaster:
-    """The reference forecaster, from the figures frozen for registration."""
-    figures = json.loads(frozen.read_text(encoding="utf-8"))
+def _fingerprints(root: pathlib.Path, files: Iterable[pathlib.Path]) -> dict[str, str]:
+    return {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files if path.exists()}
+
+
+def base_rate_forecaster(root: pathlib.Path) -> BaseRateForecaster:
+    """The reference forecaster, from the figures frozen for registration.
+
+    Refuses if anything the figures were made from has changed since: the frozen
+    file would then no longer be what the traces and adjudications give.
+    """
+    figures = json.loads((root / FROZEN).read_text(encoding="utf-8"))
+    changed = sorted(name for name, digest in figures["made_from"].items()
+                     if _fingerprints(root, [root / name]).get(name) != digest)
+    if changed:
+        raise ValueError(f"the base rates were frozen on {figures['frozen_on']} from files that have since changed "
+                         f"or gone: {', '.join(changed)}")
     return BaseRateForecaster(figures["base_rates"], {name: tuple(triple) for name, triple in figures["hazard_ratios"].items()},
                               version=f"frozen {figures['frozen_on']}")
 
 
+def _to_read(trials: Iterable[ReferenceTrial]) -> list[str]:
+    """The trials an adjudicator has something to read for: those traced as read out, or as void."""
+    return sorted(t.nct for t in trials if t.clear or t.place == VOID)
+
+
 def adjudication_sample(trials: Iterable[ReferenceTrial], size: int = SAMPLE_SIZE) -> list[str]:
     """The random sample both adjudicators read: one draw from the trials traced as read out or as void."""
-    to_read = sorted(t.nct for t in trials if t.clear or t.place == VOID)
+    to_read = _to_read(trials)
     return sorted(random.Random(SAMPLE_SEED).sample(to_read, min(size, len(to_read))))
 
 
@@ -261,7 +282,7 @@ class _Study:
     trials: list[ReferenceTrial]  # with the adjudicators' results in place of the trace wherever they have settled one
     adjudicated: dict[str, TrialResult]
     agreement: dict
-    trace_files: list[pathlib.Path]
+    made_from: list[pathlib.Path]  # every file the figures rest on
 
 
 def _load(root: pathlib.Path, today: dt.date) -> _Study:
@@ -271,9 +292,11 @@ def _load(root: pathlib.Path, today: dt.date) -> _Study:
                    design_reviews=read_records(root / DESIGN_REVIEWS, DesignReview))
     log = read_log(root / REFERENCE_ADJUDICATION)
     adjudicated = results(log, today)
+    made_from = [*trace_files, *sources["rechecks"], *sorted((root / REFERENCE_ADJUDICATION).glob("*.json*")),
+                 root / DESIGN_REVIEWS]
     return _Study(root, today, candidates, reference_trials(**sources),
                   reference_trials(**sources, adjudicated=adjudicated, awaiting_adjudication=awaiting_result(log, today), as_of=today),
-                  adjudicated, adjudicator_agreement(log), [*trace_files, *sources["rechecks"]])
+                  adjudicated, adjudicator_agreement(log), made_from)
 
 
 def _share(value: float | None) -> str:
@@ -342,46 +365,68 @@ def report(study: _Study) -> int:
     return 0
 
 
-def _drawn(root: pathlib.Path) -> list[str] | None:
-    return json.loads((root / SAMPLE).read_text(encoding="utf-8"))["trials"] if (root / SAMPLE).exists() else None
+def _drawn(root: pathlib.Path) -> dict | None:
+    return json.loads((root / SAMPLE).read_text(encoding="utf-8")) if (root / SAMPLE).exists() else None
 
 
 def sample(study: _Study) -> int:
-    """Draw the adjudicators' sample, once, and list it for them with nothing of what the trace found."""
+    """Draw the adjudicators' sample, once, and list it for them with nothing of what the trace found.
+
+    It is drawn only when no trace still awaits a re-check, and it records the
+    trials it was drawn from, so that a sample of an earlier, smaller set cannot
+    later stand for the whole.
+    """
     drawn = _drawn(study.root)
     if drawn is None:
-        drawn = adjudication_sample(study.traced)
+        waiting = sum(t.place == AWAITING_RECHECK for t in study.traced)
+        if waiting:
+            raise ValueError(f"{counted(waiting, 'trace')} still await a re-check; the sample is drawn once they are made")
+        drawn = {"drawn_on": study.today.isoformat(), "seed": SAMPLE_SEED, "trials": adjudication_sample(study.traced),
+                 "drawn_from": _to_read(study.traced)}
         (study.root / SAMPLE).parent.mkdir(parents=True, exist_ok=True)
-        (study.root / SAMPLE).write_text(json.dumps({"drawn_on": study.today.isoformat(), "seed": SAMPLE_SEED, "trials": drawn},
-                                                    indent=2) + "\n", encoding="utf-8")
+        (study.root / SAMPLE).write_text(json.dumps(drawn, indent=2) + "\n", encoding="utf-8")
     worklist = study.root / REFERENCE_ADJUDICATION / "worklist.csv"
     write_table(worklist, ("nct", "acronym", "title", "scored_endpoint"),
                 [(nct, study.candidates[nct].get("acronym"), study.candidates[nct].get("brief_title"),
-                  study.candidates[nct]["scored_endpoint"]) for nct in drawn])
-    print(f"{counted(len(drawn), 'trial')} for both adjudicators, listed in {worklist}; the draw is kept in {study.root / SAMPLE}")
+                  study.candidates[nct]["scored_endpoint"]) for nct in drawn["trials"]])
+    print(f"{counted(len(drawn['trials']), 'trial')} for both adjudicators, listed in {worklist}; "
+          f"the draw is kept in {study.root / SAMPLE}")
     return 0
 
 
 def freeze(study: _Study) -> int:
     """Fix the figures the base-rate forecaster will use, once, and only when they are fit to be fixed.
 
-    Nothing may still be waiting to be counted, and the adjudicators must have
-    settled every trial of their sample. The file records what it was made from.
+    Nothing may still be waiting to be counted. The sample must have been drawn
+    from the trials now in the reference set, and the adjudicators must have
+    settled every sampled trial still in it. And their readings must bear the
+    trace out: if they contradict it too often, the traces they did not read
+    cannot be relied on. The file records what it was made from.
     """
-    frozen = study.root / FROZEN
-    drawn, waiting = _drawn(study.root), [t.nct for t in study.trials if t.place in NOT_YET_COUNTED]
+    frozen, drawn = study.root / FROZEN, _drawn(study.root)
+    waiting = [t.nct for t in study.trials if t.place in NOT_YET_COUNTED]
     if frozen.exists():
         raise NotFrozen(f"the base rates are already frozen in {frozen}")
     if waiting:
         raise NotFrozen(f"{counted(len(waiting), 'trial')} are not yet counted (in doubt, awaiting a re-check or a design "
                         f"ruling): {', '.join(waiting[:10])}{' and more' if len(waiting) > 10 else ''}")
-    unread = None if drawn is None else [nct for nct in drawn if nct not in study.adjudicated]
-    if unread is None or unread:
-        raise NotFrozen("the adjudicators' sample has not been drawn" if unread is None else
-                        f"the adjudicators have not settled {len(unread)} of the {len(drawn)} trials in their sample")
+    if drawn is None:
+        raise NotFrozen("the adjudicators' sample has not been drawn")
+    now = set(_to_read(study.traced))
+    joined = sorted(now - set(drawn["drawn_from"]))
+    if joined:
+        raise NotFrozen(f"{counted(len(joined), 'trial')} joined the reference set after the sample was drawn on "
+                        f"{drawn['drawn_on']}, so the sample no longer speaks for it: {', '.join(joined[:10])}")
+    unread = [nct for nct in drawn["trials"] if nct in now and nct not in study.adjudicated]
+    if unread:
+        raise NotFrozen(f"the adjudicators have not settled {len(unread)} of the {len(drawn['trials'])} trials in their sample")
+    accuracy = trace_accuracy(study.traced, study.adjudicated)
+    if accuracy["trials"] and accuracy["outcome_matched"] < TRACE_ACCURACY_NEEDED * accuracy["trials"]:
+        raise NotFrozen(f"the trace had the outcome right for only {accuracy['outcome_matched']} of the {accuracy['trials']} "
+                        f"trials the adjudicators read, so the traces they did not read cannot be relied on")
     figures = frozen_base_rates(study.trials, study.today)
-    figures["made_from"] = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in study.trace_files}
-    figures["adjudicated"] = sum(t.adjudicated for t in study.trials)
+    figures.update(made_from=_fingerprints(study.root, study.made_from), adjudicated=sum(t.adjudicated for t in study.trials),
+                   trace_accuracy=accuracy)
     frozen.parent.mkdir(parents=True, exist_ok=True)
     frozen.write_text(json.dumps(figures, indent=2) + "\n", encoding="utf-8")
     print(f"base rates frozen in {frozen}")
@@ -404,7 +449,7 @@ def main(arguments: list[str] | None = None, today: dt.date | None = None) -> in
         return {"report": report, "sample": sample, "freeze": freeze}[options.step](study)
     except NotFrozen as refused:
         print(f"NOT FROZEN: {refused}")
-    except (ValueError, KeyError, OSError) as problem:
+    except (ValueError, KeyError, TypeError, OSError) as problem:
         # A file that cannot be read as what it should be: say so, and change nothing.
         print(f"NOT DONE: {problem}")
     return 1

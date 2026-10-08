@@ -120,8 +120,9 @@ def import_findings(root: pathlib.Path, today: dt.date, findings: pathlib.Path, 
             refused.append(f"{row.get('nct', '?')}: {problem}")
     if not screened_by.strip():
         refused.append("say who or what searched, with --screened-by")
-    if searched_on > today:
-        refused.append(f"a search cannot be dated {searched_on}, after today")
+    if not 0 <= (today - searched_on).days <= SCREENING_VALID_DAYS:
+        refused.append(f"a search dated {searched_on} cannot be entered on {today}: it is entered within "
+                       f"{SCREENING_VALID_DAYS} days of being made, and never before")
     if refused:
         print("NOT IMPORTED: " + "; ".join(refused))
         return 1
@@ -174,39 +175,54 @@ def import_trace(root: pathlib.Path, today: dt.date, trace_files: list[pathlib.P
     return 0
 
 
+def _row_of(record: ScreeningRecord) -> tuple:
+    """A queued decision as its row in the queue file, by which the study lead's mark finds it again."""
+    return (record.nct, record.decision, record.confidence, record.screened_on.isoformat(),
+            record.readout_date.isoformat() if record.readout_date else "", record.evidence)
+
+
 def confirm(root: pathlib.Path, today: dt.date, queue: pathlib.Path, by: str) -> int:
     """Take the study lead's marks on the queue.
 
     "yes" confirms the decision on that row. "no" on a report that a trial read
-    out or ended overrules it: the lead has looked, and records with a note that
-    the trial is eligible. Each marked row must be exactly a decision still
-    waiting in the log, so nothing is confirmed that the lead did not see.
+    out or is void overrules it: the lead has looked, and records with a note
+    that the trial is eligible. Each marked row must be exactly a decision still
+    waiting in the log, so nothing is confirmed that the lead did not see; and a
+    trial is overruled only if every report waiting for it was marked, so that a
+    newer report the lead has not seen is not swept away with an older one.
     """
-    waiting = {(r.nct, r.decision, r.confidence, r.screened_on.isoformat()): r for r in screening_summary(
+    waiting = {_row_of(r): r for r in screening_summary(
         _candidates(root, today), _log(root), read_records(root / DESIGN_REVIEWS, DesignReview), today)["queue"]}
-    rulings, refused = [], []
+    marked, rulings, refused, left = {}, [], [], 0
     for row in read_table(queue):
         mark = row.get("confirm", "").casefold()
         if mark not in ("yes", "no"):
             continue
-        record = waiting.get((row.get("nct"), row.get("decision"), row.get("confidence"), row.get("screened_on")))
+        record = waiting.get(tuple(row.get(column, "") for column in ("nct", "decision", "confidence", "screened_on", "readout_date", "evidence")))
         if record is None:
             refused.append(f"{row.get('nct', '?')}: the row is not a decision waiting in the log as it now stands")
-        elif mark == "yes":
+            continue
+        marked[_row_of(record)] = mark
+        if mark == "yes":
             rulings.append(confirmed(record, by, today))
-        elif record.decision != ELIGIBLE:
-            if not row.get("note"):
-                refused.append(f"{record.nct}: overruling a report needs a note of what the study lead found")
-                continue
+        elif record.decision == ELIGIBLE:
+            left += 1  # a finding of nothing that the lead will not confirm simply goes on waiting
+        elif not row.get("note"):
+            refused.append(f"{record.nct}: overruling a report needs a note of what the study lead found")
+        else:
             rulings.append(ScreeningRecord(
                 nct=record.nct, decision=ELIGIBLE, screened_on=today, confidence=MEDIUM, screened_by=by,
                 confirmed_by=by, confirmed_on=today,
                 evidence=f"the report of {record.screened_on} that the trial had {record.decision.replace('_', ' ')} was looked "
                          f"at and overruled: {row['note']}"))
+    overruled = {key[0] for key, mark in marked.items() if mark == "no" and key[1] != ELIGIBLE}
+    unseen = sorted({key[0] for key in waiting if key[0] in overruled and key[1] != ELIGIBLE and key not in marked})
+    refused += [f"{nct}: another report is waiting for this trial that the marked queue does not rule on" for nct in unseen]
     if refused:
         print("NOT CONFIRMED: " + "; ".join(refused))
         return 1
-    print(f"{counted(_add(root, rulings), 'decision')} ruled on by {by}")
+    print(f"{counted(_add(root, rulings), 'decision')} ruled on by {by}"
+          + (f"; {counted(left, 'finding')} of nothing marked \"no\" left waiting" if left else ""))
     return 0
 
 
@@ -289,7 +305,7 @@ def main(arguments: list[str] | None = None, today: dt.date | None = None) -> in
             return import_findings(root, today, one_file, options.screened_by, options.screened_on)
         if options.step in ("confirm", "design") and one_file and options.by.strip():
             return (confirm if options.step == "confirm" else design)(root, today, one_file, options.by.strip())
-    except (ValueError, KeyError, OSError) as problem:
+    except (ValueError, KeyError, TypeError, OSError) as problem:
         # A file that cannot be read as what it should be: say so, and change nothing.
         print(f"NOT DONE: {problem}")
         return 1

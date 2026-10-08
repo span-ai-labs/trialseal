@@ -400,6 +400,7 @@ class _Standing(NamedTuple):
     readings: dict[str, list[SourceReading]]
     held_back: dict[str, str]
     set_aside: dict[str, list[str]]
+    unsettled: dict[str, list[str]]  # sources read once, or read differently and not reconciled, whoever read them
 
 
 def _standing_readings(
@@ -422,6 +423,7 @@ def _standing_readings(
     standing: dict[str, list[SourceReading]] = {}
     held_back: dict[str, str] = {}
     aside: dict[str, list[str]] = {}
+    open_sources: dict[str, list[str]] = {}
 
     def hold_back(nct: str, reason: str) -> None:
         order = (NOT_BLIND, DISAGREEMENT, ONE_READING)
@@ -437,6 +439,8 @@ def _standing_readings(
         if disclosed_by is not None and min(dated) > disclosed_by:
             continue
         unsettled = source.reconciliation is None and (source.disputed or len(source.readings) < 2)
+        if unsettled:
+            open_sources.setdefault(nct, []).append(source_ref)
         if key in not_blind:
             if key not in after_reveal:
                 hold_back(nct, NOT_BLIND)
@@ -462,7 +466,17 @@ def _standing_readings(
         if nct not in standing:
             hold_back(nct, NOT_BLIND)
     settled_trials = {nct: readings for nct, readings in standing.items() if nct not in held_back}
-    return _Standing(settled_trials, held_back, {nct: sorted(refs) for nct, refs in aside.items() if nct in settled_trials})
+    return _Standing(settled_trials, held_back, {nct: sorted(refs) for nct, refs in aside.items() if nct in settled_trials},
+                     {nct: sorted(refs) for nct, refs in open_sources.items()})
+
+
+def unsettled_sources(log: AdjudicationLog, analysis_date: dt.date, disclosed_by: dt.date | None = None) -> dict[str, list[str]]:
+    """Trials with a source that one adjudicator has read alone, or two have read differently and not reconciled.
+
+    This counts set-aside sources too: they decide no outcome, but a hazard ratio
+    taken from one must be a number both readers recorded.
+    """
+    return _standing_readings(log, analysis_date, disclosed_by).unsettled
 
 
 def set_aside(log: AdjudicationLog, analysis_date: dt.date, disclosed_by: dt.date | None = None) -> dict[str, list[str]]:
@@ -512,16 +526,24 @@ def results(
     return found
 
 
+def _require_today(what: str, nct: str, recorded_on: dt.date, today: dt.date) -> None:
+    if recorded_on != today:
+        raise ValueError(f"{nct}: {what} is recorded on the day it is made, {today}, not dated {recorded_on}; "
+                         f"an entry dated earlier could pass for one made before the forecasts were opened")
+
+
 def record_adjudication(
-    log_file: pathlib.Path, adjudication: Adjudication, forecast_access: Iterable[ForecastAccess]
+    log_file: pathlib.Path, adjudication: Adjudication, forecast_access: Iterable[ForecastAccess], today: dt.date
 ) -> None:
     """Append an adjudication to its log, unless it is a late reading of a source its author could have read blind.
 
     Someone who has opened a trial's forecasts may still read a source disclosed
     after they opened them: that reading is set aside in every registered analysis
     (ADR-0015). A source that was already public when they opened the forecasts
-    is refused, since nothing but a blind reading of it will ever count.
+    is refused, since nothing but a blind reading of it will ever count. A reading
+    is recorded on the day it is made.
     """
+    _require_today("a reading", adjudication.nct, adjudication.recorded_on, today)
     opened = _first_opened(AdjudicationLog(forecast_access=tuple(forecast_access)))
     first_seen = opened.get((adjudication.nct, adjudication.adjudicator))
     if first_seen is not None and first_seen <= adjudication.recorded_on and adjudication.disclosed_on <= first_seen:
@@ -537,12 +559,19 @@ def record_forecast_access(log_file: pathlib.Path, access: ForecastAccess, today
     records.append(log_file, access)
 
 
-def record_reconciliation(log_file: pathlib.Path, reconciliation: Reconciliation, log: AdjudicationLog) -> None:
-    """Append a reconciliation to its log, if it settles a recorded disagreement and its adjudicators are still blind."""
+def record_reconciliation(log_file: pathlib.Path, reconciliation: Reconciliation, log: AdjudicationLog, today: dt.date) -> None:
+    """Append a reconciliation to its log, if it settles a recorded disagreement, on the day it is made.
+
+    Its adjudicators must still be blind, unless the source is a later one read
+    after a reveal: that is set aside for the outcome whoever settles it, and
+    settling it is how its hazard ratio comes to be one number (ADR-0015).
+    """
+    _require_today("a reconciliation", reconciliation.nct, reconciliation.recorded_on, today)
     with_it = AdjudicationLog(log.adjudications, (*log.reconciliations, reconciliation), log.withdrawals,
                               log.forecast_access)
-    _, not_blind, _ = _replay(with_it, reconciliation.recorded_on)
-    if (reconciliation.nct, reconciliation.source_type, reconciliation.source) in not_blind:
+    _, not_blind, after_reveal = _replay(with_it, reconciliation.recorded_on)
+    source = (reconciliation.nct, reconciliation.source_type, reconciliation.source)
+    if source in not_blind and source not in after_reveal:
         raise NotBlind(f"{reconciliation.nct}: reconciled after an adjudicator opened its forecasts")
     records.append(log_file, reconciliation)
 

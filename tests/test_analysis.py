@@ -775,7 +775,11 @@ def test_hazard_ratios_that_arrive_after_the_final_date_are_scored_once_six_mont
     # The same 120 trials the final analysis scored, now each with its hazard ratio.
     assert made["effect_size"]["base_rate"]["n_trials"] == 120 == final["primary"]["n_trials"]
     assert made["effect_size"]["base_rate"]["hazard_ratio_awaited"] == []
-    assert set(made) == {"kind", "run_on", "readouts_to", "hazard_ratios_to", "effect_size", "effect_size_missing_as_no_effect"}
+    # Nobody had opened a forecast when the later hazard ratios were read, so none was read after a reveal.
+    assert made["effect_size"]["base_rate"]["hazard_ratio_read_after_reveal"] == []
+    assert set(made) == {"kind", "run_on", "readouts_to", "hazard_ratios_to", "hazard_ratios_searched_on", "effect_size",
+                         "effect_size_missing_as_no_effect"}
+    assert made["hazard_ratios_searched_on"] == SIX_MONTHS_ON
     # Made once, like the others; and the final analysis is still regenerated exactly as it was.
     later = SIX_MONTHS_ON + dt.timedelta(days=30)
     assert follow_up((batches, log), later, record_file, searched_on=None, n_boot=7) == made
@@ -783,6 +787,33 @@ def test_hazard_ratios_that_arrive_after_the_final_date_are_scored_once_six_mont
     assert run_final((batches, log), later, record_file) == final
     with pytest.raises(AlreadyRun):
         follow_up((batches, log), later, record_file, plan=dataclasses.replace(PLAN, effect_size_baselines=("base_rate", "other")))
+
+
+def test_the_follow_up_is_made_on_the_plan_the_final_analysis_was_made_on(tmp_path):
+    batches, log = a_study_with_late_hazard_ratios()
+    record_file = tmp_path / "analyses.jsonl"
+    run_final((batches, AdjudicationLog([a for a in log.adjudications if a.recorded_on <= EIGHTEEN_MONTHS])), EIGHTEEN_MONTHS,
+              record_file)
+    with pytest.raises(AlreadyRun, match="final analysis was run on 2028-05-02"):
+        follow_up((batches, log), SIX_MONTHS_ON, record_file,
+                  plan=dataclasses.replace(PLAN, effect_size_baselines=("base_rate", "other")))
+    assert [r.kind for r in records.read(record_file, AnalysisRecord)] == ["final_analysis"]
+
+
+def test_the_follow_up_waits_for_a_hazard_ratio_that_only_one_adjudicator_has_read(tmp_path):
+    batches, log = a_study_with_late_hazard_ratios()
+    record_file = tmp_path / "analyses.jsonl"
+    run_final((batches, AdjudicationLog([a for a in log.adjudications if a.recorded_on <= EIGHTEEN_MONTHS])), EIGHTEEN_MONTHS,
+              record_file)
+    revealed = [ForecastAccess(nct=t.nct, person=who, opened_on=EIGHTEEN_MONTHS + dt.timedelta(days=1))
+                for t in batches[0].trials for who in ("first", "second")]
+    # After the reveal the congress report of NCT0002 is read by one adjudicator only. It is set aside for the outcome
+    # either way, but its hazard ratio would be scored on one person's copying of a number.
+    read_once = [a for a in log.adjudications
+                 if not (a.nct == "NCT0002" and a.source_type == "conference" and a.adjudicator == "second")]
+    with pytest.raises(NotReady, match=r"NCT0002 \(https://example.test/congress\)"):
+        follow_up((batches, AdjudicationLog(read_once, forecast_access=revealed)), SIX_MONTHS_ON, record_file)
+    assert follow_up((batches, AdjudicationLog(log.adjudications, forecast_access=revealed)), SIX_MONTHS_ON, record_file)
 
 
 def test_the_follow_up_scores_the_trials_of_the_final_analysis_and_no_others(tmp_path):

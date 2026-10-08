@@ -8,6 +8,7 @@ from trialforecast import records
 from trialforecast.adjudication import (
     Adjudication, AdjudicationLog, ForecastAccess, NotBlind, Reconciliation, Withdrawal, awaiting_result,
     derive_outcome, read_log, record_adjudication, record_forecast_access, record_reconciliation, results, set_aside,
+    unsettled_sources,
 )
 
 TOPLINE_DAY = dt.date(2027, 3, 14)
@@ -205,9 +206,9 @@ def test_a_reconciliation_must_settle_a_recorded_disagreement_between_its_own_ad
 def test_a_reconciliation_is_checked_before_it_enters_the_log(tmp_path):
     log_file = tmp_path / "reconciliation.jsonl"
     with pytest.raises(ValueError, match="does not settle"):
-        record_reconciliation(log_file, reconciled(), log_of(both(hazard_ratio=0.60)))
+        record_reconciliation(log_file, reconciled(), log_of(both(hazard_ratio=0.60)), today=reconciled().recorded_on)
     assert not log_file.exists()
-    record_reconciliation(log_file, reconciled(), log_of(HAZARD_RATIO_DISPUTE))
+    record_reconciliation(log_file, reconciled(), log_of(HAZARD_RATIO_DISPUTE), today=reconciled().recorded_on)
     assert records.read(log_file, Reconciliation) == [reconciled()]
 
 
@@ -226,7 +227,7 @@ def test_an_adjudicator_may_correct_their_own_entry_before_anyone_disagrees(tmp_
         adjudicated(adjudicator="second", recorded_on=TOPLINE_DAY + dt.timedelta(days=2)),
     ]
     for entry in entries:
-        record_adjudication(log_file, entry, forecast_access=[])
+        record_adjudication(log_file, entry, forecast_access=[], today=entry.recorded_on)
     kept = records.read(log_file, Adjudication)
     assert kept == entries  # the log keeps the superseded entry
     assert result_of(kept).outcome == "positive"
@@ -347,11 +348,11 @@ def test_someone_who_has_opened_a_trials_forecasts_cannot_adjudicate_it(tmp_path
     log_file = tmp_path / "adjudication.jsonl"
     opened = [ForecastAccess(nct="NCT1", person="First", opened_on=TOPLINE_DAY)]
     with pytest.raises(NotBlind, match="first"):
-        record_adjudication(log_file, adjudicated(adjudicator="first"), forecast_access=opened)
+        record_adjudication(log_file, adjudicated(adjudicator="first"), forecast_access=opened, today=TOPLINE_DAY)
     assert not log_file.exists()
     # Someone else, or another trial, is unaffected.
-    record_adjudication(log_file, adjudicated(adjudicator="second"), forecast_access=opened)
-    record_adjudication(log_file, adjudicated(nct="NCT2", adjudicator="first"), forecast_access=opened)
+    record_adjudication(log_file, adjudicated(adjudicator="second"), forecast_access=opened, today=TOPLINE_DAY)
+    record_adjudication(log_file, adjudicated(nct="NCT2", adjudicator="first"), forecast_access=opened, today=TOPLINE_DAY)
     assert len(records.read(log_file, Adjudication)) == 2
 
 
@@ -373,7 +374,7 @@ def test_reconciling_after_opening_the_forecasts_is_not_blind_either(tmp_path):
     assert awaiting_result(log, LATER) == {"NCT1": "adjudicated after opening the forecasts"}
     with pytest.raises(NotBlind):
         record_reconciliation(tmp_path / "reconciliation.jsonl", reconciled(),
-                              log_of(HAZARD_RATIO_DISPUTE, forecast_access=opened))
+                              log_of(HAZARD_RATIO_DISPUTE, forecast_access=opened), today=reconciled().recorded_on)
 
 
 def test_a_reading_that_was_not_blind_can_be_withdrawn_and_replaced_by_a_blind_one():
@@ -398,9 +399,9 @@ def test_the_whole_log_is_read_back_from_its_directory(tmp_path):
     opened = ForecastAccess(nct="NCT1", person="first", opened_on=LATER)
     assert read_log(tmp_path) == AdjudicationLog()
 
-    record_adjudication(tmp_path / "adjudications.jsonl", first, [])
-    record_adjudication(tmp_path / "adjudications.jsonl", second, [])
-    record_reconciliation(tmp_path / "reconciliations.jsonl", settled, AdjudicationLog([first, second]))
+    record_adjudication(tmp_path / "adjudications.jsonl", first, [], today=TOPLINE_DAY)
+    record_adjudication(tmp_path / "adjudications.jsonl", second, [], today=TOPLINE_DAY)
+    record_reconciliation(tmp_path / "reconciliations.jsonl", settled, AdjudicationLog([first, second]), today=TOPLINE_DAY)
     records.append(tmp_path / "forecast_access.jsonl", opened)
 
     log = read_log(tmp_path)
@@ -513,9 +514,9 @@ def test_a_set_aside_source_that_only_one_person_has_read_does_not_drop_the_tria
 
 def test_a_reading_after_the_reveal_is_taken_only_for_a_source_disclosed_after_it(tmp_path):
     log_file, opened = tmp_path / "adjudications.jsonl", opened_by_both()
-    record_adjudication(log_file, paper_reading("first", recorded_on=PAPER_DAY), opened)       # a later source: allowed
+    record_adjudication(log_file, paper_reading("first", recorded_on=PAPER_DAY), opened, today=PAPER_DAY)       # a later source: allowed
     with pytest.raises(NotBlind, match="first"):                                                # the topline was public before
-        record_adjudication(log_file, adjudicated(adjudicator="first", recorded_on=PAPER_DAY), opened)
+        record_adjudication(log_file, adjudicated(adjudicator="first", recorded_on=PAPER_DAY), opened, today=PAPER_DAY)
     assert len(records.read(log_file, Adjudication)) == 1
 
 
@@ -530,3 +531,25 @@ def test_opening_forecasts_is_recorded_on_the_day_it_happens(tmp_path):
 def test_a_reconciliation_cannot_date_a_source_after_the_day_it_was_recorded():
     with pytest.raises(ValueError, match="disclosed before"):
         reconciled(disclosed_on=dt.date(2031, 1, 1))
+
+
+def test_a_reading_or_a_reconciliation_is_recorded_on_the_day_it_is_made(tmp_path):
+    # Dated the day before a reveal but entered after it, a reading would pass for a blind one.
+    late_entry = adjudicated(adjudicator="first", recorded_on=TOPLINE_DAY)
+    with pytest.raises(ValueError, match="recorded on the day it is made"):
+        record_adjudication(tmp_path / "a.jsonl", late_entry, [], today=TOPLINE_DAY + dt.timedelta(days=40))
+    with pytest.raises(ValueError, match="recorded on the day it is made"):
+        record_reconciliation(tmp_path / "r.jsonl", reconciled(), log_of(HAZARD_RATIO_DISPUTE), today=LATER)
+
+
+def test_two_readers_of_a_later_source_can_settle_the_hazard_ratio_they_read_differently(tmp_path):
+    press_release = [adjudicated(adjudicator=who) for who in ("first", "second")]
+    typed = [paper_reading("first", outcome="positive", hazard_ratio=0.71), paper_reading("second", outcome="positive", hazard_ratio=0.17)]
+    log = log_of(press_release + typed, forecast_access=opened_by_both())
+    assert unsettled_sources(log, LATER) == {"NCT1": ["https://example.test/paper"]}
+    settled = Reconciliation(nct="NCT1", source_type="paper_or_regulator", source="https://example.test/paper", outcome="positive",
+                             hazard_ratio=0.71, hazard_ratio_endpoint="Overall survival", disclosed_on=PAPER_DAY,
+                             reason="0.17 was a typing slip", adjudicators=("first", "second"), recorded_on=LATER)
+    record_reconciliation(tmp_path / "r.jsonl", settled, log, today=LATER)      # allowed: the source came after the reveal
+    after = log_of(press_release + typed, forecast_access=opened_by_both(), reconciliations=[settled])
+    assert unsettled_sources(after, LATER) == {} and set_aside(after, LATER) == {"NCT1": ["https://example.test/paper"]}

@@ -254,18 +254,36 @@ def test_the_reference_command_writes_the_tables_and_the_report(study_dir, capsy
     assert (out / "hazard_ratios.csv").exists() and (out / "trials.csv").read_text().count("\n") == 55
 
 
+def recheck_the_doubtful_trace(study_dir):
+    trace(study_dir / "data" / "readout_trace", ["NCT0030,yes,2025-03-01,not_met,OS,,,high"], name="rechecks.csv")
+
+
+def adjudicate(study_dir, ncts, contradicting=()):
+    """Both adjudicators read these trials and agree with the trace, except where told to contradict it."""
+    for nct in ncts:
+        met = bool(int(nct[3:]) % 3) != (nct in contradicting)
+        for reading in both_adjudicated(nct, "positive" if met else "negative", readout=dt.date(2025, 3, 1), recorded_on=TODAY,
+                                        hazard_ratio=0.7, hazard_ratio_endpoint="Overall survival"):
+            records.append(study_dir / "adjudication" / "reference" / "adjudications.jsonl", reading)
+
+
+def drawn_sample(study_dir):
+    return json.loads((study_dir / "adjudication" / "reference" / "sample.json").read_text())
+
+
 def test_the_adjudicators_sample_is_drawn_once_and_shows_nothing_of_what_the_trace_found(study_dir, capsys):
+    assert run(study_dir, "sample") == 1 and "still await a re-check" in capsys.readouterr().out
+    recheck_the_doubtful_trace(study_dir)
     assert run(study_dir, "sample") == 0
-    worklist = study_dir / "adjudication" / "reference" / "worklist.csv"
-    listed = worklist.read_text().splitlines()
+    listed = (study_dir / "adjudication" / "reference" / "worklist.csv").read_text().splitlines()
     assert listed[0] == "nct,acronym,title,scored_endpoint" and len(listed) == 41 and "met" not in "".join(listed[1:])
-    drawn = json.loads((study_dir / "adjudication" / "reference" / "sample.json").read_text())
+    drawn = drawn_sample(study_dir)
     assert drawn["trials"] == [line.split(",")[0] for line in listed[1:]] and drawn["drawn_on"] == "2026-10-09"
+    assert len(drawn["drawn_from"]) == 54
     # More trials are traced afterwards: the sample the adjudicators were given does not change.
-    more = trace(study_dir / "data" / "readout_trace", [], name="trace_B.csv")
-    more.write_text(HEADER + "".join(f"NCT{i:04d},yes,2025-03-01,met,OS,,,high\n" for i in range(1, 2)).replace("NCT0001", "NCT0100"))
+    (study_dir / "data" / "readout_trace" / "trace_B.csv").write_text(HEADER + "NCT0100,yes,2025-03-01,met,OS,,,high\n")
     assert run(study_dir, "sample", today=TODAY + dt.timedelta(days=5)) == 0
-    assert json.loads((study_dir / "adjudication" / "reference" / "sample.json").read_text()) == drawn
+    assert drawn_sample(study_dir) == drawn
 
 
 def test_base_rates_are_frozen_once_and_only_when_fit_to_be(study_dir, capsys):
@@ -276,26 +294,65 @@ def test_base_rates_are_frozen_once_and_only_when_fit_to_be(study_dir, capsys):
         assert why in capsys.readouterr().out
 
     refused("1 trial are not yet counted")                                    # NCT0030 awaits a re-check
-    trace(study_dir / "data" / "readout_trace", ["NCT0030,yes,2025-03-01,not_met,OS,,,high"], name="rechecks.csv")
+    recheck_the_doubtful_trace(study_dir)
     refused("the adjudicators' sample has not been drawn")
     run(study_dir, "sample")
     refused("have not settled 40 of the 40 trials in their sample")
-    drawn = json.loads((study_dir / "adjudication" / "reference" / "sample.json").read_text())["trials"]
-    for nct in drawn:
-        for reading in both_adjudicated(nct, "positive" if int(nct[3:]) % 3 else "negative", readout=dt.date(2025, 3, 1),
-                                        recorded_on=TODAY, hazard_ratio=0.7, hazard_ratio_endpoint="Overall survival"):
-            records.append(study_dir / "adjudication" / "reference" / "adjudications.jsonl", reading)
+    adjudicate(study_dir, drawn_sample(study_dir)["trials"])
     capsys.readouterr()
 
     assert run(study_dir, "freeze") == 0
     figures = json.loads(frozen.read_text())
     assert figures["base_rates"]["industry/overall_survival"] == pytest.approx(20 / 30)
-    assert figures["adjudicated"] == 40 and sorted(figures["made_from"]) == ["rechecks.csv", "trace_A.csv"]
-    assert all(len(digest) == 64 for digest in figures["made_from"].values())
-    forecaster = base_rate_forecaster(frozen)
+    assert figures["adjudicated"] == 40 and figures["trace_accuracy"]["outcome_matched"] == 40
+    assert sorted(figures["made_from"]) == [
+        "adjudication/reference/adjudications.jsonl", "adjudication/reference/sample.json",
+        "data/readout_trace/rechecks.csv", "data/readout_trace/trace_A.csv"]
+    forecaster = base_rate_forecaster(study_dir)
     forecast = forecaster.forecast(candidate("NCT9999"), TODAY)
     assert forecast.probability_positive == pytest.approx(20 / 30) and forecaster.version == "frozen 2026-10-09"
     assert run(study_dir, "freeze") == 1 and "already frozen" in capsys.readouterr().out
+    # The frozen figures are only as good as what they were made from: a trace edited afterwards is noticed.
+    edited = study_dir / "data" / "readout_trace" / "trace_A.csv"
+    edited.write_text(edited.read_text().replace("NCT0001,yes,2025-03-01,met", "NCT0001,yes,2025-03-01,not_met"))
+    with pytest.raises(ValueError, match="have since changed or gone: data/readout_trace/trace_A.csv"):
+        base_rate_forecaster(study_dir)
+
+
+def test_a_sample_drawn_from_fewer_trials_does_not_stand_for_the_reference_set(study_dir, capsys):
+    traces = study_dir / "data" / "readout_trace"
+    last = "NCT0054,yes,2025-03-01,not_met,OS,0.7,2025-03-01,high\n"
+    (traces / "trace_A.csv").write_text((traces / "trace_A.csv").read_text().replace(last, ""))
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    adjudicate(study_dir, drawn_sample(study_dir)["trials"])
+    (traces / "trace_B.csv").write_text(HEADER + last)             # traced after the sample was drawn
+    capsys.readouterr()
+    assert run(study_dir, "freeze") == 1
+    assert "1 trial joined the reference set after the sample was drawn on 2026-10-09" in capsys.readouterr().out
+    (traces / "trace_B.csv").unlink()
+    assert run(study_dir, "freeze") == 0
+
+
+def test_a_sampled_trial_that_leaves_the_reference_set_need_not_be_adjudicated(study_dir, capsys):
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    sampled = drawn_sample(study_dir)["trials"]
+    adjudicate(study_dir, sampled[1:])
+    # A second look at the first sampled trial finds it has not read out after all: there is nothing to adjudicate.
+    rechecks = study_dir / "data" / "readout_trace" / "rechecks.csv"
+    rechecks.write_text(rechecks.read_text() + f"{sampled[0]},no,,,,,,high\n")
+    assert run(study_dir, "freeze") == 0
+
+
+def test_nothing_is_frozen_when_the_adjudicators_contradict_the_trace_too_often(study_dir, capsys):
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    sampled = drawn_sample(study_dir)["trials"]
+    adjudicate(study_dir, sampled, contradicting=sampled[:5])        # 35 of 40 right: under nine in ten
+    capsys.readouterr()
+    assert run(study_dir, "freeze") == 1
+    assert "outcome right for only 35 of the 40" in capsys.readouterr().out
 
 
 def test_a_trace_that_cannot_be_read_stops_the_command_without_a_traceback(study_dir, capsys):
@@ -303,6 +360,8 @@ def test_a_trace_that_cannot_be_read_stops_the_command_without_a_traceback(study
     bad.write_text(HEADER + "NCT0100,yes,2025-03-01,met,OS,0.70 (0.55-0.89),2025-03-01,high\n")
     assert run(study_dir, "report") == 1
     assert "NOT DONE: NCT0100: hazard ratio '0.70 (0.55-0.89)' is not a number" in capsys.readouterr().out
+    bad.write_text(HEADER + "NCT0100,yes,2025-03-01,met,OS,nan,2025-03-01,high\n")
+    assert run(study_dir, "report") == 1 and "must be a positive, finite number" in capsys.readouterr().out
     bad.write_text(HEADER.replace("disclosed,", "") + "NCT0100,2025-03-01,met,OS,,,high\n")
     assert run(study_dir, "report") == 1 and "says whether its result was disclosed" in capsys.readouterr().out
     assert main(["report", "--study", str(study_dir / "nowhere")], today=TODAY) == 1
