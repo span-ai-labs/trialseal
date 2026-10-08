@@ -13,3 +13,7 @@
 - [ ] Excluded designs are listed with the reason
 - [ ] A summary reports how many candidates are eligible, already read out, excluded and awaiting confirmation
 - [ ] Needs the study lead: confirmation of the queued decisions
+
+## Comments
+
+**2026-10-08, from ticket 02's review.** A candidate tagged for exclusion review can currently be screened as eligible and enter a batch. This ticket should add an explicit screening decision for an excluded design, and refuse to clear a tagged candidate until a person has settled the review. Note also that a screening clears a trial for a batch only if it is no more than 14 days old, so the first batch needs the whole screen done inside that window.

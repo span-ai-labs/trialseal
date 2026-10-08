@@ -11,6 +11,12 @@ Vocabulary is in `CONTEXT.md`, decisions in `docs/adr/`, the spec and tickets in
 
 - `scripts/snapshot_universe.py` — pull a time-stamped superset of candidate trials from the ClinicalTrials.gov API into `snapshots/<dataTimestamp>/`.
 - `src/trialforecast/universe.py` — flatten a snapshot into candidates (time-to-event primary endpoint, not withdrawn), each with its scored endpoint, reference class, alias record and any exclusion-review tag; writes `data/universe/`.
+- `src/trialforecast/forecasting.py` — the forecast shape, the contract every forecaster meets, and the base-rate forecaster.
+- `src/trialforecast/screening.py` — screening records and which candidates are eligible.
+- `src/trialforecast/batch.py` — builds a batch (refusing any trial not screened as eligible), fingerprints it, writes and reads it.
+- `src/trialforecast/adjudication.py` — adjudications and the outcomes two adjudicators agree on.
+- `src/trialforecast/analysis.py` — the primary comparison, on each trial's first forecast.
+- `src/trialforecast/records.py` — append-only logs, one canonical JSON line per record.
 - `src/trialforecast/scoring.py` — Brier, clipped log score, Murphy decomposition, AUC, CRPS and interval score on the log hazard ratio, paired cluster bootstrap.
 - `tests/` — unit tests for the above.
 
@@ -25,6 +31,8 @@ uv run pytest
 
 ## Status
 
-Built: snapshot, candidate universe with reference classes and aliases, scoring harness. Not built yet: readout detection,
-outcome adjudication log, baselines, forecast elicitation, sealing. Nothing has been
-registered or sealed.
+Built: snapshot, candidate universe, scoring, and a walking skeleton of the record pipeline
+(screening, base-rate forecaster, batch with fingerprint, two-person adjudication, primary
+comparison). Not built yet: real screening, the reference set, full adjudication rules,
+time-stamped sealing, the other forecasters, readout detection. Nothing has been registered
+or sealed.

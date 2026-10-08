@@ -14,3 +14,7 @@
 - [ ] Each adjudication records the disclosure language and holds the original text with a translation where needed
 - [ ] A disagreement blocks the result until a reconciliation is recorded with its reason
 - [ ] Adjudication entries cannot be made by someone who has opened that trial's forecasts
+
+## Comments
+
+**2026-10-08, from ticket 02's review.** Agreement between adjudicators is currently on the outcome only: two adjudications that agree a trial was positive but record hazard ratios of 0.6 and 0.95, or readout dates months apart, still produce a result, with the earliest date taken. This ticket should require agreement on the hazard ratio and settle the readout date by the source-ranking rule. A second entry by the same adjudicator currently replaces their first silently; it should be recorded as a revision with its history.

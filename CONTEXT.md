@@ -10,6 +10,10 @@ Forecasting the results of randomised phase 3 cancer trials before they are know
 A randomised phase 3 cancer trial in the registry with a time-to-event primary endpoint that has not been withdrawn. A candidate becomes an eligible trial only after screening.
 _Avoid_: Universe trial, in-scope trial
 
+**Screening**:
+Checking a candidate for an existing public primary result before a batch, with the evidence recorded. Only a candidate screened as having none is an eligible trial.
+_Avoid_: Filtering, vetting, pre-check
+
 **Eligible trial**:
 A randomised phase 3 cancer trial with a time-to-event primary endpoint and no public primary result on the day a forecast is sealed.
 _Avoid_: In-window trial, upcoming trial

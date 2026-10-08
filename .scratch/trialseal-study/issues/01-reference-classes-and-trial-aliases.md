@@ -19,7 +19,7 @@
 
 Decisions taken here that need the study lead:
 
-- The scored endpoint is the first *time-to-event* primary endpoint listed, not simply the first listed (ADR-0012, status proposed). It differs from the first-listed endpoint for 230 of 2,422 candidates.
+- The scored endpoint is the first *time-to-event* primary endpoint listed, not simply the first listed (ADR-0012, accepted by the study lead on 2026-10-08). It differs from the first-listed endpoint for 230 of 2,422 candidates.
 - Survival with no qualifier ("Survival", "2-year survival rate") is classed as overall survival.
 - Any mention of non-inferiority in the title, summary, description or primary outcome queues the candidate for exclusion review (131 candidates, one of them an industry-led trial in the next 15 months).
 
