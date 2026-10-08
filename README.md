@@ -20,6 +20,7 @@ Vocabulary is in `CONTEXT.md`, decisions in `docs/adr/`, the spec and tickets in
 - `src/trialforecast/anchors.py` — the two kinds of time-stamping service (an RFC 3161 authority, verified with OpenSSL, and OpenTimestamps).
 - `src/trialforecast/analysis.py` — the registered analysis plan: the primary comparison on first forecasts with trials of one drug resampled together, every forecaster's calibration and discrimination, hazard-ratio scoring against baselines, the sensitivity analyses, and the descriptive look and final analysis, each made once on its fixed date and afterwards only regenerated as it was.
 - `src/trialforecast/report.py` — the one command that regenerates every registered table and figure from the seals, the openings, the adjudication log and the screening log.
+- `src/trialforecast/pilot.py` — the retrospective pilot: the cutoff and memorisation probes, the buffer after each model's stated cutoff, closed-book forecasts on later readouts, and the pilot report.
 - `src/trialforecast/records.py` — append-only logs, one canonical JSON line per record.
 - `src/trialforecast/scoring.py` — Brier, clipped log score, Murphy decomposition, AUC, CRPS and interval score on the log hazard ratio, paired cluster bootstrap.
 - `tests/` — unit tests for the above.
@@ -40,7 +41,30 @@ uv run python scripts/snapshot_universe.py   # one snapshot per registry data ti
 uv run trialforecast-universe                # refined universe from the latest snapshot
 uv run pytest
 uv run trialseal-analysis                    # every registered table and figure that is due, into results/
+uv run trialseal-pilot probe                 # then forecast, then report: the retrospective pilot, below
 ```
+
+## The retrospective pilot
+
+Before anything is sealed, the method is tried on trials that have already read out. It tests the method and is not the evidence. Three steps, each of which can be stopped and run again; `--model` works with one model of the roster and `--budget-usd` caps what one invocation spends:
+
+```bash
+uv run trialseal-pilot probe
+```
+
+asks each model what it already knows about every traced trial, from the registry record and from identifiers alone, and when the result was first reported.
+
+```bash
+uv run trialseal-pilot forecast
+```
+
+chooses each model's buffer from its probes and has it forecast, with no web access, only the trials that read out after its stated cutoff plus that buffer.
+
+```bash
+uv run trialseal-pilot report
+```
+
+writes `results/pilot/report.md`, the recall table and the list of pilot trials for the adjudicators. Replies and forecasts are kept under `private/pilot/` and are never printed, because the adjudicators have still to read the pilot trials. Their readings go in `adjudication/pilot/`; the report uses them in place of the traced results as they arrive.
 
 ## Checking a seal yourself
 
@@ -76,5 +100,6 @@ uv run trialseal-verify seals/2026-11-02 revealed/NCT00000000.jsonl
 
 Built: snapshot, candidate universe, scoring, the record pipeline (screening, base-rate forecaster,
 batches, adjudication rules), sealing with reveal verification, frontier models as forecasters, and the registered
-analysis plan with its one command. Not built yet: real screening, the reference set, the statistical baselines and the
+analysis plan with its one command, and the retrospective pilot (probes run for two models and forecasts for one; outcomes
+await adjudication). Not built yet: real screening, the reference set, the statistical baselines and the
 Span forecaster, readout detection, the reveal step and scoreboard. Nothing has been registered or sealed.

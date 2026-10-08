@@ -33,7 +33,8 @@ PROVIDERS_WITHOUT_EFFORT = ("google",)
 
 
 class ModelUnavailable(Exception):
-    """A model cannot be asked at all: a missing or rejected key, or a model name the provider does not know.
+    """A model cannot be asked: a missing or rejected key, an account out of credit, a request the provider
+    will not accept, or a model name it does not know.
 
     This stops the batch. Recording it as "no forecast produced" would make a
     configuration mistake a permanent part of the study's record.
@@ -126,17 +127,23 @@ def _not_a_number(name: str) -> float:
     raise ValueError(f"{name} is not a number a forecast can hold")
 
 
+def last_json_object(text: str | None) -> str | None:
+    """The last flat JSON object in a reply, as text. Only the last counts: a draft is never taken for the answer."""
+    found = _JSON_OBJECT.findall(text or "")
+    return found[-1] if found else None
+
+
 def usable_answer(text: str | None) -> tuple[float, float, float, float] | None:
     """The four numbers from the last JSON object in a reply, if they form a valid forecast.
 
     Only the last object counts: an earlier draft is never taken in place of a
     final answer that turned out malformed.
     """
-    found = _JSON_OBJECT.findall(text or "")
-    if not found:
+    final = last_json_object(text)
+    if final is None:
         return None
     try:
-        stated = json.loads(found[-1], parse_constant=_not_a_number)
+        stated = json.loads(final, parse_constant=_not_a_number)
         numbers = tuple(stated[name] for name in _ASKED_FOR)
         if any(isinstance(x, bool) or not isinstance(x, (int, float)) for x in numbers):
             return None
@@ -222,9 +229,13 @@ def _geometric_mean(values: tuple[float, ...]) -> float:
     return math.exp(sum(math.log(v) for v in values) / len(values))
 
 
+def writable(text: str | None) -> str:
+    """A reply's text as it can be stored: characters that cannot be written as UTF-8 are replaced, nothing else."""
+    return (text or "").encode("utf-8", "replace").decode("utf-8")
+
+
 def _as_recorded(reply: Reply) -> str:
-    # Models can return characters that cannot be written as UTF-8; those are replaced, nothing else is touched.
-    text = (reply.text or "").encode("utf-8", "replace").decode("utf-8")
+    text = writable(reply.text)
     if reply.failure is None:
         return text
     return f"[no answer: {reply.failure}]" + (f" {text}" if text else "")
@@ -238,12 +249,17 @@ def _failed(reason: str, text: str | None = None, tokens: tuple[int, int] = (0, 
 
 
 def _after_error(spec: ModelSpec, status: int | None) -> Reply:
-    """What an error from a provider means. Only its status is used, never its message, which may quote a key."""
-    if status in (401, 403, 404):
-        raise ModelUnavailable(f"{spec.provider} would not serve {spec.model} (status {status}): check the key and the name")
+    """What an error from a provider means. Only its status is used, never its message, which may quote a key.
+
+    An outage is a failed reply that is asked again. Anything else the provider
+    rejects stops everything: a wrong key, an unknown model, an account out of
+    credit or a request it will not accept is a fault in the setup, and says
+    nothing about what the model would have forecast.
+    """
     if status is None or status in (408, 409, 429) or status >= 500:
         return _failed(OUTAGE)
-    return _failed("request rejected")
+    raise ModelUnavailable(f"{spec.provider} would not serve {spec.model} (status {status}): check the key, the "
+                           f"account's credit and the model's name")
 
 
 _clients: dict[str, Any] = {}

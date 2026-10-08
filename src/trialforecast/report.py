@@ -30,6 +30,7 @@ from trialforecast.anchors import TimestampService, verifying_services
 from trialforecast.batch import InvalidForecast
 from trialforecast.screening import ScreeningRecord
 from trialforecast.sealing import NotInSeal, Plan, SealNotAnchored, TamperedSeal, read_sealed_study
+from trialforecast.wording import counted
 
 SCREENING_LOG = pathlib.Path("screening") / "screening.jsonl"
 ANALYSIS_RECORDS = pathlib.Path("study") / "analyses.jsonl"
@@ -161,13 +162,9 @@ def _draw_differences(path: pathlib.Path, comparisons: dict[str, dict]) -> None:
 # --- the command -------------------------------------------------------------------
 
 
-def _counted(n: int, noun: str) -> str:
-    return f"{n} {noun}" if n == 1 else f"{n} {noun}{'es' if noun.endswith('ch') else 's'}"
-
-
 def _say_final(final: dict, plan: Plan) -> None:
     if final["decision"] == "extended":
-        print(f"the study is extended to {final['readouts_to']}: {_counted(final['n_trials'], 'trial')} could be "
+        print(f"the study is extended to {final['readouts_to']}: {counted(final['n_trials'], 'trial')} could be "
               f"scored, fewer than {analysis.TRIALS_NEEDED}; nothing has been scored")
         return
     d = final["primary"]["difference"]
@@ -176,7 +173,7 @@ def _say_final(final: dict, plan: Plan) -> None:
         return
     interval = "" if d["ci_low"] is None else f" (95% interval {d['ci_low']:.4f} to {d['ci_high']:.4f})"
     estimate = (f"difference in Brier score, {plan.forecaster} minus {plan.reference}: {d['mean_diff']:.4f}{interval} "
-                f"on {_counted(final['primary']['n_trials'], 'trial')}")
+                f"on {counted(final['primary']['n_trials'], 'trial')}")
     if final["decision"] == "estimate_only":
         print(f"{estimate}; too few trials or too few drug groups, so no claim is made")
     else:
@@ -205,7 +202,7 @@ def main(
         # Whatever is wrong with the files, nothing is scored from them.
         print(f"NOT REGENERATED: {problem}")
         return 1
-    print(f"{_counted(len(study.batches), 'batch')}, {_counted(len(state.batches_of), 'trial')} sealed, "
+    print(f"{counted(len(study.batches), 'batch', 'batches')}, {counted(len(state.batches_of), 'trial')} sealed, "
           f"{len(state.results)} with a result, {len(state.awaiting_adjudication)} awaiting adjudication")
 
     plan, record_file, results_dir = study.plan, root / ANALYSIS_RECORDS, root / "results"

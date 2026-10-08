@@ -39,3 +39,5 @@ Known limits:
 - Gemini 3.8 Flash returned "high demand" errors on most attempts during the check, and the Pro model returned "quota exceeded", which suggests the Google key is on the free tier.
 - Nothing yet builds a real batch from the roster; ticket 15 does that.
 - The date of use is recorded but not checked against the batch date.
+
+**2026-10-08, from ticket 09.** One rule here has changed. A request that a provider rejects (status 400, 402, 422 and the like) used to be recorded as a failed reply, which could end as a record of "no forecast produced". In the pilot that turned an Anthropic account that had run out of credit into five such records. Any rejected request now raises `ModelUnavailable` and stops the batch, as a wrong key always did; only an outage is a failed reply.

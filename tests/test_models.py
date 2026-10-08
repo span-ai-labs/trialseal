@@ -342,29 +342,32 @@ def openai_error(status):
     return openai.APIStatusError("error", response=httpx.Response(status, request=request), body=None)
 
 
-def test_an_outage_is_a_failed_reply_and_a_rejected_request_is_not_an_outage():
-    for status, failure in ((529, OUTAGE), (429, OUTAGE), (500, OUTAGE), (400, "request rejected")):
+def test_an_outage_is_a_failed_reply():
+    for status in (529, 429, 500):
         client, _ = anthropic_client(anthropic_error(status))
-        assert ask_anthropic(OPUS, "the prompt", client=client).failure == failure
+        assert ask_anthropic(OPUS, "the prompt", client=client).failure == OUTAGE
         client, _ = openai_client(openai_error(status if status != 529 else 503))
-        assert ask_openai(GPT, "the prompt", client=client).failure == failure
+        assert ask_openai(GPT, "the prompt", client=client).failure == OUTAGE
     client, _ = google_client(google_errors.ServerError(503, {"error": {"message": "high demand"}}))
     assert ask_google(GEMINI, "the prompt", client=client).failure == OUTAGE
     client, _ = google_client(httpx.ConnectError("connection dropped"))
     assert ask_google(GEMINI, "the prompt", client=client).failure == OUTAGE
 
 
-def test_a_wrong_key_or_model_name_stops_everything_instead_of_becoming_a_missing_forecast():
-    for status in (401, 403, 404):
+def test_a_request_the_provider_rejects_stops_everything_instead_of_becoming_a_missing_forecast():
+    # A wrong key (401, 403), an unknown model (404), an account out of credit or a malformed request (400, 402, 422):
+    # none of these is the model's answer, so none may be recorded as the model producing no forecast.
+    for status in (401, 403, 404, 400, 402, 422):
         client, _ = anthropic_client(anthropic_error(status))
         with pytest.raises(ModelUnavailable, match="claude-opus-5-5"):
             ask_anthropic(OPUS, "the prompt", client=client)
         client, _ = openai_client(openai_error(status))
         with pytest.raises(ModelUnavailable):
             ask_openai(GPT, "the prompt", client=client)
-    client, _ = google_client(google_errors.ClientError(404, {"error": {"message": "no such model"}}))
-    with pytest.raises(ModelUnavailable):
-        ask_google(GEMINI, "the prompt", client=client)
+    for status in (404, 400):
+        client, _ = google_client(google_errors.ClientError(status, {"error": {"message": "rejected"}}))
+        with pytest.raises(ModelUnavailable):
+            ask_google(GEMINI, "the prompt", client=client)
 
 
 def test_no_key_never_appears_in_a_failure():

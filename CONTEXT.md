@@ -190,16 +190,24 @@ _Avoid_: Continuation, second look
 Forecasts made without web access on trials whose readout came after a model's training cutoff. It tests the method; it is not the evidence.
 _Avoid_: Backtest, retrospective arm
 
+**Traced trial**:
+A past trial whose readout was looked up from public sources by one reader and has not been adjudicated. Traced trials give the pilot its trials; none enters the reference set until both adjudicators have read it.
+_Avoid_: Labelled trial, ground truth
+
 **Cutoff probe**:
-Asking a model, with no web access, what a past trial showed when given its registry record, for readouts in each month around the training cutoff its provider states.
+Asking a model, with no web access, what a past trial showed and when that was first reported, given its registry record, for readouts in each month around the training cutoff its provider states.
 _Avoid_: Leakage test, knowledge check
 
 **Memorisation probe**:
 The same question asked with the trial's identifiers alone, so that a right answer can only come from memory.
 _Avoid_: Recall test, contamination check
 
+**Recall**:
+A model's knowing a past result: it says it knows it, gives the right result, and dates its first report to within three months. The right result without the right date is not recall, because a model can infer a result and say it knows.
+_Avoid_: Leakage, contamination, memorised result
+
 **Buffer**:
-The months after a model's stated training cutoff that are left out of its pilot, running through the last month in which either probe found it recalling a result.
+The months after a model's stated training cutoff that are left out of its pilot, running through the last month in which either probe found recall, and never less than one.
 _Avoid_: Margin, grace period, washout
 
 **Pilot trial**:
