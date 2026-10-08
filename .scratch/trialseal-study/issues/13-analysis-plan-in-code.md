@@ -18,3 +18,5 @@
 ## Comments
 
 **2026-10-08, from ticket 02's review.** The first forecast is found by forecaster name, so a forecaster renamed between batches would have a later forecast counted as its first. This ticket should fix a forecaster's identity across versions. The primary comparison currently returns Brier scores only: the paired uncertainty grouped by drug, and the all-sponsor secondary set, are still to add.
+
+**2026-10-08, from ticket 05.** Each result now carries the endpoint its hazard ratio was reported for, as text. The effect-size analysis should check it against the scored endpoint named in the batch before scoring, and use each result's disclosure language for the sensitivity analysis without non-English disclosures.

@@ -118,6 +118,14 @@ _Avoid_: Unsealing, release
 Two people independently deciding, blind to the forecasts, whether a trial was positive, negative or void, and what hazard ratio was reported.
 _Avoid_: Labelling, annotation, resolution
 
+**Awaiting adjudication**:
+The state of a trial that has a readout the adjudicators have not yet settled: read by one of them only, or read differently by the two.
+_Avoid_: Pending, unresolved, in review
+
+**Reconciliation**:
+The two adjudicators' settled reading of a source they first read differently, recorded with its reason. Until it exists the trial has no result.
+_Avoid_: Tie-break, override, arbitration
+
 **Primary analysis set**:
 The industry-led eligible trials, on which the registered primary comparison is made. Trials from all other sponsors are sealed and scored as a secondary set.
 _Avoid_: Main cohort, test set

@@ -14,3 +14,7 @@
 - [ ] It carries a research-only notice and the conflict-of-interest statement
 - [ ] The adjudication log for revealed trials is published with it
 - [ ] Needs the study lead: counsel's sign-off
+
+## Comments
+
+**2026-10-08, from ticket 05.** Adjudication blindness depends on a record of who opened which trial's forecasts and when. Reveal, and any other tool that shows a forecast to a person, must write that record before showing it.

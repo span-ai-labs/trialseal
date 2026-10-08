@@ -1,10 +1,11 @@
 """The registered comparison: a forecaster against a reference, on first forecasts."""
 from __future__ import annotations
 
+import datetime as dt
 from typing import Iterable
 
 from trialforecast import scoring
-from trialforecast.adjudication import WITH_READOUT, Adjudication, agreed_outcomes
+from trialforecast.adjudication import WITH_READOUT, AdjudicationLog, awaiting_result, results
 from trialforecast.batch import Batch
 from trialforecast.forecasting import Forecast
 
@@ -30,14 +31,14 @@ def first_forecasts(batches: Iterable[Batch], forecaster: str) -> dict[str, Fore
 
 
 def primary_comparison(
-    batches: Iterable[Batch], adjudications: Iterable[Adjudication], forecaster: str, reference: str
+    batches: Iterable[Batch], log: AdjudicationLog, forecaster: str, reference: str, analysis_date: dt.date
 ) -> dict:
-    """Brier scores of a forecaster and a reference on the primary analysis set.
+    """Brier scores of a forecaster and a reference on the primary analysis set, as of the analysis date.
 
-    A trial is scored when two adjudicators agree it was positive or negative, it is
+    A trial is scored when its adjudicated result is positive or negative, it is
     industry-led, and both forecasters' first forecasts were issued before its readout.
     A first forecast issued on or after the readout means screening missed that readout;
-    such trials are reported and left out.
+    such trials are reported and left out, as are trials whose adjudication is not yet settled.
     """
     batches = in_date_order(batches)
     forecaster_first = first_forecasts(batches, forecaster)
@@ -48,19 +49,19 @@ def primary_comparison(
             sponsor_type.setdefault(trial.nct, trial.sponsor_type)
 
     scored, not_before_readout = [], []
-    agreed = agreed_outcomes(adjudications)
-    for nct in sorted(agreed):
-        outcome, readout_date = agreed[nct]
-        if outcome not in WITH_READOUT or sponsor_type.get(nct) != PRIMARY_ANALYSIS_SET:
+    adjudicated = results(log, analysis_date)
+    for nct in sorted(adjudicated):
+        result = adjudicated[nct]
+        if result.outcome not in WITH_READOUT or sponsor_type.get(nct) != PRIMARY_ANALYSIS_SET:
             continue
         if nct not in forecaster_first or nct not in reference_first:
             continue
-        if max(forecaster_first[nct].batch_date, reference_first[nct].batch_date) >= readout_date:
+        if max(forecaster_first[nct].batch_date, reference_first[nct].batch_date) >= result.readout_date:
             not_before_readout.append(nct)
             continue
         scored.append(nct)
 
-    positive = [1.0 if agreed[nct].outcome == "positive" else 0.0 for nct in scored]
+    positive = [1.0 if adjudicated[nct].outcome == "positive" else 0.0 for nct in scored]
     return {
         "n_trials": len(scored),
         "brier": {
@@ -68,4 +69,7 @@ def primary_comparison(
             for name, first in ((forecaster, forecaster_first), (reference, reference_first))
         },
         "forecast_not_before_readout": not_before_readout,
+        "awaiting_adjudication": {
+            nct: reason for nct, reason in sorted(awaiting_result(log, analysis_date).items()) if nct in sponsor_type
+        },
     }

@@ -19,6 +19,8 @@ import re
 
 import pandas as pd
 
+from trialforecast.dates import add_months
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 # Decides which trials are candidates. Tuned on two hand-labelled samples in the
@@ -56,12 +58,6 @@ def parse_date(s: str | None) -> dt.date | None:
         return None
     parts = [int(x) for x in s.split("-")]
     return dt.date(parts[0], parts[1], parts[2] if len(parts) > 2 else 1)
-
-
-def add_months(d: dt.date, months: int) -> dt.date:
-    y, m = divmod(d.year * 12 + d.month - 1 + months, 12)
-    last = [31, 29 if y % 4 == 0 and (y % 100 or y % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m]
-    return dt.date(y, m + 1, min(d.day, last))
 
 
 def endpoint_type(measure: str) -> str | None:

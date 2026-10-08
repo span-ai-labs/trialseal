@@ -21,11 +21,6 @@ def test_parse_date_handles_month_only():
     assert u.parse_date(None) is None
 
 
-def test_add_months_clamps_day():
-    assert u.add_months(dt.date(2026, 10, 31), -8) == dt.date(2026, 2, 28)
-    assert u.add_months(dt.date(2026, 10, 6), 15) == dt.date(2028, 1, 6)
-
-
 def test_refine_filters_and_tags():
     as_of = dt.date(2026, 10, 6)
     df = pd.DataFrame([u.flatten(s) for s in [

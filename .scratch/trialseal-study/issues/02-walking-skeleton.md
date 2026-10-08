@@ -28,7 +28,7 @@ Review found the first version's guards could be bypassed; each finding became a
 - The primary comparison takes the adjudication log itself, scores industry-led trials only (ADR-0003), and reports, without scoring, any trial whose first forecast was not issued before its readout.
 - Two adjudications by the same person under differently typed names count as one.
 
-One rule was introduced here and needs the study lead's confirmation:
+One rule was introduced here; the study lead confirmed it on 2026-10-08:
 
 - A screening clears a trial for a batch only if it is no more than 14 days old.
 

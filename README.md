@@ -14,7 +14,7 @@ Vocabulary is in `CONTEXT.md`, decisions in `docs/adr/`, the spec and tickets in
 - `src/trialforecast/forecasting.py` — the forecast shape, the contract every forecaster meets, and the base-rate forecaster.
 - `src/trialforecast/screening.py` — screening records and which candidates are eligible.
 - `src/trialforecast/batch.py` — builds a batch (refusing any trial not screened as eligible), fingerprints it, writes and reads it.
-- `src/trialforecast/adjudication.py` — adjudications and the outcomes two adjudicators agree on.
+- `src/trialforecast/adjudication.py` — adjudications of each source, reconciliations, and the rules that turn them into a trial's result (source ranking, readout date, hazard-ratio window, blindness).
 - `src/trialforecast/analysis.py` — the primary comparison, on each trial's first forecast.
 - `src/trialforecast/records.py` — append-only logs, one canonical JSON line per record.
 - `src/trialforecast/scoring.py` — Brier, clipped log score, Murphy decomposition, AUC, CRPS and interval score on the log hazard ratio, paired cluster bootstrap.
