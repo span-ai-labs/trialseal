@@ -11,8 +11,12 @@ A randomised phase 3 cancer trial in the registry with a time-to-event primary e
 _Avoid_: Universe trial, in-scope trial
 
 **Screening**:
-Checking a candidate for an existing public primary result before a batch, with the evidence recorded. Only a candidate screened as having none is an eligible trial.
+Searching for an existing public primary result of a candidate before a batch, with the evidence, the day and the searcher's confidence recorded. Only a candidate screened as having none, within the last 14 days, is an eligible trial.
 _Avoid_: Filtering, vetting, pre-check
+
+**Confirmation**:
+The study lead's acceptance of a screening decision made with low or medium confidence. Until it is confirmed such a decision does not stand, and a doubtful report that a trial has read out keeps the trial out until the study lead confirms or overrules it.
+_Avoid_: Sign-off, approval, override
 
 **Eligible trial**:
 A randomised phase 3 cancer trial with a time-to-event primary endpoint and no public primary result on the day a forecast is sealed.
@@ -35,7 +39,7 @@ A trial whose readout does not meet that bar, including an early stop for futili
 _Avoid_: Failed trial
 
 **Void trial**:
-A trial ended for safety, enrolment or strategy without a primary analysis. It has no readout.
+A trial ended for safety, enrolment or strategy without a primary analysis. It has no readout. A candidate already known to be void is never an eligible trial.
 _Avoid_: Terminated, cancelled
 
 **Alias record**:
@@ -49,6 +53,10 @@ _Avoid_: Study drug, experimental arm, asset
 **Exclusion review**:
 A flag on a candidate whose design may rule it out, such as a mention of non-inferiority, to be settled by a person before it can be eligible.
 _Avoid_: Excluded, filtered out
+
+**Design ruling**:
+A person's decision, with its reason, that a candidate's design keeps it in the study or rules it out. It settles an exclusion review and does not go stale.
+_Avoid_: Design decision, waiver, exemption
 
 **Unresolved trial**:
 An eligible trial for which no readout has been found by the analysis date.
@@ -151,8 +159,16 @@ The industry-led eligible trials, on which the registered primary comparison is 
 _Avoid_: Main cohort, test set
 
 **Reference set**:
-The past trials whose readouts were traced and adjudicated by hand, from which the base rates are taken.
+The past trials whose readouts were traced, re-checked where the trace was unsure, and adjudicated by both adjudicators on a random sample. The base rates are taken from those with a clear result and are frozen once the sample has been adjudicated.
 _Avoid_: Training set, historical cohort
+
+**Clear result**:
+A past trial's result that counts towards a base rate: positive or negative, from a trace that is not in doubt, a re-check, or the adjudicators. Void and unresolved trials are never clear results.
+_Avoid_: Usable outcome, label
+
+**Re-check**:
+A second, fuller search of a traced trial whose first trace was of low confidence. It replaces the first trace; until it is made the trial is not counted.
+_Avoid_: Review, second pass, audit
 
 **Reference**:
 The forecaster a comparison is made against. In the registered primary comparison it is the base rate.
@@ -182,6 +198,14 @@ _Avoid_: Interim analysis, checkpoint
 The one test of the registered claim, on a date fixed at registration.
 _Avoid_: Readout, result
 
+**Effect-size follow-up**:
+The single registered completion of the effect-size analysis, six months after the final analysis date, scoring the same trials against the hazard ratios disclosed by then.
+_Avoid_: Second analysis, update, addendum
+
+**Set-aside source**:
+A source disclosed after a trial's forecasts were opened and read by someone who had opened them. It never decides an outcome in a registered analysis; one sensitivity analysis counts it, and a hazard ratio it reports is still used.
+_Avoid_: Unblinded reading, tainted source
+
 **Extension**:
 The single lengthening of the study from 18 to 24 months, made when too few trials can be scored at 18 months. It is decided on a count alone, before anything is scored.
 _Avoid_: Continuation, second look
@@ -191,7 +215,7 @@ Forecasts made without web access on trials whose readout came after a model's t
 _Avoid_: Backtest, retrospective arm
 
 **Traced trial**:
-A past trial whose readout was looked up from public sources by one reader and has not been adjudicated. Traced trials give the pilot its trials; none enters the reference set until both adjudicators have read it.
+A past trial whose readout was looked up from public sources by one reader. A trace is provisional: it gives the pilot its trials and the reference set its provisional figures, and the adjudicators' reading replaces it wherever they have settled the trial.
 _Avoid_: Labelled trial, ground truth
 
 **Cutoff probe**:

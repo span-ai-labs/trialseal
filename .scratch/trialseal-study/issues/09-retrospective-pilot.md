@@ -22,7 +22,7 @@
 
 1. Adjudicate the pilot trials listed in `results/pilot/adjudication_worklist.csv`, each of you independently, without opening anything under `private/pilot/`. Readings go in `adjudication/pilot/adjudications.jsonl` (and `reconciliations.jsonl` where you differ). There is no entry form yet: ticket 16 builds one, and until then readings are appended with `record_adjudication`. Record a hazard ratio under the scored endpoint's exact name, as the worklist gives it.
 2. Run `uv run trialseal-pilot report` again. It replaces traced results with adjudicated ones as they arrive, re-draws each model's pilot trials from the adjudicated readout dates, and reports your agreement.
-3. Add credit to the Anthropic account, then run `uv run trialseal-pilot forecast --model claude-opus-5-5` (25 calls, about $2) and the report again. The account ran out after about $5, just as Claude's probes finished, so its 5 pilot trials have no forecasts yet. The first attempt recorded the provider's rejections as the model producing no forecast; that is fixed (any rejected request now stops the run) and those records were removed.
+3. Done 2026-10-09: with credit added, Claude Opus 5.5 forecast its 5 pilot trials and the report was regenerated.
 4. Fix the Google key's billing if Gemini is to be in the pilot: it failed nearly every call, so it has not been probed.
 5. Look again at the sources for the trials the report lists under "the right result with a date more than 3 months before the readout on record". One such check has already moved a traced date by seven months.
 
@@ -38,7 +38,7 @@
 
 **Two reviews found defects, all fixed with tests that fail without the fix.** The stand-in model in the file-level tests never produced a forecast, so some assertions were empty. A buffer could be chosen from half-finished probes, and a model that refused every probe counted as having no recall. Adjudicated results replaced outcomes but not readout dates, pilot membership or base rates, and a void trial kept the pilot provisional for good. A registry time frame naming a data cut-off was shown to the forecaster. A forecast lost to an outage was billed but not counted against the budget, and a model without prices was never stopped. The score "without the trials it said it knew" could give away a single forecast when only one trial was removed.
 
-**Rules introduced here that the study lead has not confirmed.**
+**Rules introduced here.** The study lead said on 2026-10-09 to go with all recommendations, which I have taken to confirm these.
 
 1. Recall is the right result with the month of first report right to within three months.
 2. The buffer runs through the last month with recall on either probe and is never less than one month. A model left with fewer than 5 pilot trials is dropped; so is one that gives a usable answer to fewer than 90% of probe questions.

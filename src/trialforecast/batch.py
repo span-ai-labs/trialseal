@@ -11,7 +11,7 @@ from typing import Iterable
 
 from trialforecast import records
 from trialforecast.forecasting import Candidate, Forecast, Forecaster
-from trialforecast.screening import ScreeningRecord, require_eligible
+from trialforecast.screening import DesignReview, ScreeningRecord, corrected_drugs, require_eligible
 from trialforecast.universe import ENDPOINT_TYPES, SPONSOR_TYPES, drug_name
 
 _REGISTRY_DATE = re.compile(r"\d{4}-\d{2}(-\d{2})?")
@@ -40,6 +40,7 @@ class BatchTrial:
     endpoint_type: str
     investigational_drug: str | None = None
     registry_completion_date: str | None = None  # as the registry gives it: a month or a day
+    exclusion_review: str | None = None  # the tag that made a person rule on its design, if it carried one
 
     def __post_init__(self) -> None:
         records.require_trial_id(self.nct)
@@ -102,11 +103,13 @@ def build_batch(
     trials: Iterable[Candidate],
     screening: Iterable[ScreeningRecord],
     forecasters: Iterable[Forecaster],
+    design_reviews: Iterable[DesignReview] = (),
 ) -> Batch:
     """Issue every forecaster's forecast for every trial.
 
-    Refuses any trial screening has not cleared for this date, and any forecast
-    that is not the forecaster's own for the trial and batch asked.
+    Refuses any trial screening has not cleared for this date, any whose design
+    was ruled out or still awaits a ruling, and any forecast that is not the
+    forecaster's own for the trial and batch asked.
     """
     trials = sorted(trials, key=lambda c: c["nct"])
     forecasters = list(forecasters)
@@ -115,7 +118,9 @@ def build_batch(
     if repeated:
         raise ValueError(f"forecaster names must be unique; repeated: {', '.join(repeated)}")
 
-    require_eligible(batch_date, [c["nct"] for c in trials], screening)
+    screening = list(screening)
+    require_eligible(batch_date, [(c["nct"], c.get("exclusion_review")) for c in trials], screening, design_reviews)
+    corrected = corrected_drugs(screening, batch_date)
 
     forecasts: dict[str, tuple[Forecast, ...]] = {}
     for forecaster in forecasters:
@@ -131,8 +136,10 @@ def build_batch(
     batch_trials = tuple(
         BatchTrial(nct=c["nct"], scored_endpoint=c["scored_endpoint"],
                    sponsor_type=_text_or_none(c["sponsor_type"]), endpoint_type=c["endpoint_type"],
-                   investigational_drug=_text_or_none(c["investigational_drug"]),
-                   registry_completion_date=_text_or_none(c["primary_completion_date"]))
+                   # Screening is where a person corrects the drug the registry's record suggests.
+                   investigational_drug=corrected.get(c["nct"], _text_or_none(c["investigational_drug"])),
+                   registry_completion_date=_text_or_none(c["primary_completion_date"]),
+                   exclusion_review=_text_or_none(c.get("exclusion_review")))
         for c in trials
     )
     return Batch(batch_date=batch_date, trials=batch_trials, forecasts=forecasts)

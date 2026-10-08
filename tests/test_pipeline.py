@@ -90,7 +90,7 @@ def test_a_screening_record_needs_a_known_decision_evidence_and_a_plain_date():
     with pytest.raises(ValueError):
         screened("NCT1", "probably fine")
     with pytest.raises(ValueError):
-        ScreeningRecord(nct="NCT1", decision="eligible", screened_on=SCREENED_ON, evidence="  ")
+        ScreeningRecord(nct="NCT1", decision="eligible", screened_on=SCREENED_ON, evidence="  ", confidence="high")
     with pytest.raises(ValueError):
         screened("NCT1", "eligible", on=dt.datetime(2026, 10, 30, 12, 0))
 

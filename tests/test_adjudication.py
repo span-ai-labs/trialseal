@@ -7,7 +7,7 @@ import pytest
 from trialforecast import records
 from trialforecast.adjudication import (
     Adjudication, AdjudicationLog, ForecastAccess, NotBlind, Reconciliation, Withdrawal, awaiting_result,
-    derive_outcome, read_log, record_adjudication, record_reconciliation, results,
+    derive_outcome, read_log, record_adjudication, record_forecast_access, record_reconciliation, results, set_aside,
 )
 
 TOPLINE_DAY = dt.date(2027, 3, 14)
@@ -462,17 +462,69 @@ def test_a_log_can_be_cut_back_to_what_it_held_when_an_analysis_was_run():
         as_run.first(grown.sizes())
 
 
-def test_a_reading_that_was_not_blind_holds_back_only_an_analysis_that_covers_its_source():
+REVEAL = TOPLINE_DAY + dt.timedelta(days=30)
+
+
+def opened_by_both(on=REVEAL):
+    return [ForecastAccess(nct="NCT1", person=who, opened_on=on) for who in ("first", "second")]
+
+
+def paper_reading(who, outcome="negative", **reading):
+    return adjudicated(adjudicator=who, outcome=outcome, source_type="paper_or_regulator", source="https://example.test/paper",
+                       disclosed_on=PAPER_DAY, **reading)
+
+
+def test_a_later_source_read_after_the_reveal_is_set_aside_while_a_blind_reading_stands():
+    press_release = [adjudicated(adjudicator=who, hazard_ratio=0.7) for who in ("first", "second")]
+    # After the reveal the same two people read the paper, which reverses the result: they are no longer blind for it.
+    log = log_of(press_release + [paper_reading(who) for who in ("first", "second")], forecast_access=opened_by_both())
+
+    assert awaiting_result(log, LATER) == {}
+    blind = results(log, LATER)["NCT1"]
+    assert (blind.outcome, [r.source for r in blind.history]) == ("positive", [TOPLINE])
+    assert set_aside(log, LATER) == {"NCT1": ["https://example.test/paper"]}
+    # Counted only when asked for, as one sensitivity analysis does.
+    assert results(log, LATER, count_set_aside=True)["NCT1"].outcome == "negative"
+    # With no blind reading at all, the trial has no result and is held back, as before.
+    only_the_paper = log_of([paper_reading(who) for who in ("first", "second")], forecast_access=opened_by_both())
+    assert awaiting_result(only_the_paper, LATER) == {"NCT1": "adjudicated after opening the forecasts"}
+    assert results(only_the_paper, LATER) == {} and set_aside(only_the_paper, LATER) == {}
+
+
+def test_recording_that_forecasts_were_opened_cannot_set_aside_a_source_that_was_already_public():
+    # Both sources were public before anyone opened the forecasts, and the paper decides against the forecaster.
     press_release = [adjudicated(adjudicator=who) for who in ("first", "second")]
-    opened = [ForecastAccess(nct="NCT1", person=who, opened_on=TOPLINE_DAY + dt.timedelta(days=30)) for who in ("first", "second")]
-    # After the reveal the same two people read the paper: they are no longer blind for it.
-    paper = [adjudicated(adjudicator=who, source_type="paper_or_regulator", source="https://example.test/paper",
-                         disclosed_on=PAPER_DAY) for who in ("first", "second")]
-    log = log_of(press_release + paper, forecast_access=opened)
+    paper = [paper_reading(who, recorded_on=PAPER_DAY + dt.timedelta(days=20)) for who in ("first", "second")]
+    assert results(log_of(press_release + paper), LATER)["NCT1"].outcome == "negative"
+    # An entry saying one adjudicator opened the forecasts before reading the paper does not bring the press release
+    # back: the paper was already public then, so reading it late is not blind, and the trial is held back.
+    back_dated = [ForecastAccess(nct="NCT1", person="first", opened_on=PAPER_DAY + dt.timedelta(days=10))]
+    log = log_of(press_release + paper, forecast_access=back_dated)
     assert awaiting_result(log, LATER) == {"NCT1": "adjudicated after opening the forecasts"}
-    before_the_paper = PAPER_DAY - dt.timedelta(days=1)
-    assert awaiting_result(log, LATER, disclosed_by=before_the_paper) == {}
-    assert results(log, LATER, disclosed_by=before_the_paper)["NCT1"].outcome == "positive"
+    assert results(log, LATER) == {} and set_aside(log, LATER) == {}
+
+
+def test_a_set_aside_source_that_only_one_person_has_read_does_not_drop_the_trial_when_it_is_counted():
+    press_release = [adjudicated(adjudicator=who) for who in ("first", "second")]
+    log = log_of([*press_release, paper_reading("first")], forecast_access=opened_by_both())
+    assert results(log, LATER)["NCT1"].outcome == "positive"
+    assert results(log, LATER, count_set_aside=True)["NCT1"].outcome == "positive"     # an unsettled reading counts for nothing
+
+
+def test_a_reading_after_the_reveal_is_taken_only_for_a_source_disclosed_after_it(tmp_path):
+    log_file, opened = tmp_path / "adjudications.jsonl", opened_by_both()
+    record_adjudication(log_file, paper_reading("first", recorded_on=PAPER_DAY), opened)       # a later source: allowed
+    with pytest.raises(NotBlind, match="first"):                                                # the topline was public before
+        record_adjudication(log_file, adjudicated(adjudicator="first", recorded_on=PAPER_DAY), opened)
+    assert len(records.read(log_file, Adjudication)) == 1
+
+
+def test_opening_forecasts_is_recorded_on_the_day_it_happens(tmp_path):
+    access_file = tmp_path / "forecast_access.jsonl"
+    with pytest.raises(ValueError, match="today"):
+        record_forecast_access(access_file, ForecastAccess(nct="NCT1", person="first", opened_on=REVEAL), today=REVEAL + dt.timedelta(days=1))
+    record_forecast_access(access_file, ForecastAccess(nct="NCT1", person="first", opened_on=REVEAL), today=REVEAL)
+    assert len(records.read(access_file, ForecastAccess)) == 1
 
 
 def test_a_reconciliation_cannot_date_a_source_after_the_day_it_was_recorded():

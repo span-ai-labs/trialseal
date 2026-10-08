@@ -60,6 +60,17 @@ def auc(p, y) -> float:
     return float(((diff > 0).sum() + 0.5 * (diff == 0).sum()) / diff.size)
 
 
+def wilson_interval(positive: int, trials: int, level: float = 0.95) -> tuple[float | None, float | None]:
+    """The Wilson score interval for a share: it stays inside 0 and 1 and behaves with few trials."""
+    if trials == 0:
+        return None, None
+    z = norm.ppf(0.5 + level / 2)
+    share, spread = positive / trials, z * z / trials
+    centre = (share + spread / 2) / (1 + spread)
+    half = z * np.sqrt(share * (1 - share) / trials + spread / (4 * trials)) / (1 + spread)
+    return float(max(0.0, centre - half)), float(min(1.0, centre + half))
+
+
 # --- continuous forecasts of the log hazard ratio ---------------------------
 
 def crps_normal(mu, sigma, x) -> np.ndarray:

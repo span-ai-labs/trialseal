@@ -683,3 +683,22 @@ def test_a_model_the_provider_will_not_serve_stops_the_command_without_a_traceba
 
     assert run("probe", pilot_dir, not_served) == 1
     assert "NOT DONE: anthropic would not serve example-1" in capsys.readouterr().out
+
+
+def test_a_score_over_one_or_two_trials_is_not_shown_since_it_would_give_a_forecast_away():
+    trials = [past(f"NCT{i}", dt.date(2026, month, 10), True, 0.8 if i == 2 else None) for i, month in enumerate((3, 8, 8, 9, 9, 10), 1)]
+    text = report([a_model_pilot(trials)], trials, agreement=None, written_on=TODAY)
+    assert "- Brier score, model minus base rate: -0.070 over 5 trials." in text
+    assert "- CRPS of the log hazard ratio, model minus effect-size baseline: not shown for 1 trial" in text
+
+
+def test_the_pilot_keeps_to_the_traces_it_was_begun_on(pilot_dir, capsys):
+    assert run("forecast", pilot_dir, Scripted()) == 1 and "has not been begun" in capsys.readouterr().out
+    model = Scripted()
+    assert run("probe", pilot_dir, model) == 0
+    assert json.loads((pilot_dir / "study" / "pilot_traces.json").read_text()) == ["trace_A.csv"]
+    # Another tranche is traced afterwards. It does not join the pilot, whose probes would otherwise be incomplete.
+    (pilot_dir / "data" / "readout_trace" / "trace_B.csv").write_text(
+        "nct,disclosed,first_disclosure_date,primary_result,hr_value,hr_first_public_date\nNCT0021,yes,2026-09-20,met,,\n")
+    assert run("probe", pilot_dir, model) == 0 and len(model.probes) == 44
+    assert run("forecast", pilot_dir, model) == 0

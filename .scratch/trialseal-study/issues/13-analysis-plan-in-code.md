@@ -37,7 +37,7 @@ The carried-over comments: a forecaster is its name, and a forecaster that was n
 
 **Two reviews found guards that could be got round; each is now closed with a test that fails without the fix.** The day the final analysis was run used to decide the extension; it now uses only sources disclosed by its fixed date and refuses to run until every sealed trial is accounted for. The plan was a loose file; every seal now carries it. A seal could be removed to make a later forecast look like a first; seals are now chained. The record that an analysis had run was trusted; it now stores what the analysis was run on and what it produced, and a recorded extension is recomputed before it is believed. A trial could be dropped by recording that its forecasts had been opened; that now blocks the analysis instead. One drug group gave an interval of no width; no claim now rests on fewer than 30 drug groups.
 
-**Rules introduced here that the study lead has not confirmed.** They belong in the protocol:
+**Rules introduced here.** The study lead said on 2026-10-09 to go with all recommendations, which I have taken to confirm these; they belong in the protocol:
 
 1. The claim is supported when the whole 95% interval for the difference in Brier score favours the forecaster (percentile bootstrap over drug groups, 10,000 resamples, fixed seed). The p-value is reported and plays no part.
 2. No claim rests on fewer than 30 drug groups; with fewer, the study reports an estimate only.
@@ -52,8 +52,8 @@ The carried-over comments: a forecaster is its name, and a forecaster that was n
 11. In the estimate-only case p-values are removed and intervals kept.
 
 12. With enough trials but fewer than 30 drug groups at 18 months, the study ends as an estimate with no extension. Below 30 drug groups no comparison is given an interval or a p-value.
-13. A hazard ratio still awaited at the date of the final analysis is never scored: the analysis runs once. The alternative is a registered second run of the effect-size analysis six months later. **This one needs a decision.**
-14. Once a trial's forecasts are revealed, the two adjudicators are no longer blind for it, yet a later and more authoritative source may still need reading (ADR-0008). Today such a reading holds the trial back from any analysis that covers the source. The protocol needs a rule for who reads later sources after a reveal. **This one needs a decision.**
+13. A hazard ratio still awaited at the date of the final analysis is never scored: the analysis runs once. Decided 2026-10-09 (ADR-0014): a registered follow-up runs once, six months after the final analysis date, and scores the same trials against the hazard ratios disclosed by then. It is built (`effect_size_follow_up`) and `trialseal-analysis` writes it when due.
+14. Once a trial's forecasts are revealed, the two adjudicators are no longer blind for it, yet a later and more authoritative source may still need reading (ADR-0008). Today such a reading holds the trial back from any analysis that covers the source. Decided 2026-10-09 (ADR-0015): a source read after the forecasts were opened decides nothing; a blind reading of another source stands, the later one is set aside and listed, and one sensitivity analysis counts it. A trial with no blind reading still holds up the final analysis.
 15. The sensitivity analysis that ADR-0011 promises for missing hazard ratios counts each as a hazard ratio of 1.
 16. Trials outside the primary analysis set must also be accounted for before the final analysis.
 17. A void trial is dated by its earliest disclosure. The model table counts a readout if the model sealed a forecast for the trial in any batch before it, for any sponsor.

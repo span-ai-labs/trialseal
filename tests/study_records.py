@@ -29,8 +29,12 @@ def candidate(nct, measure="Overall survival", **kwargs):
     return universe.flatten(study(nct, measure, **kwargs))
 
 
-def screened(nct, decision, on=SCREENED_ON):
-    return ScreeningRecord(nct=nct, decision=decision, screened_on=on, evidence="searched press releases and filings")
+def screened(nct, decision, on=SCREENED_ON, **fields):
+    """A screening record of high confidence; one that found a readout names its date and a source."""
+    found = dict(readout_date=on - dt.timedelta(days=40), evidence_links=("https://example.test/topline",)) \
+        if decision == "already_read_out" else {}
+    return ScreeningRecord(nct=nct, decision=decision, screened_on=on, evidence="searched press releases and filings",
+                           **{"confidence": "high", **found, **fields})
 
 
 def adjudicated(nct, adjudicator, outcome, readout=dt.date(2027, 3, 14), **reading):

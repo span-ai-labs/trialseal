@@ -56,7 +56,7 @@ TITLE_TRIAL_NAME = re.compile(r"\(([A-Za-z][\w .\-/]{2,40})\)\s*$")
 
 def parse_date(s: str | None) -> dt.date | None:
     """Registry dates are YYYY-MM-DD or YYYY-MM; a month-only date maps to its first day."""
-    if not s:
+    if not isinstance(s, str) or not s:  # a record read from a table carries NaN where the registry gave no date
         return None
     parts = [int(x) for x in s.split("-")]
     return dt.date(parts[0], parts[1], parts[2] if len(parts) > 2 else 1)

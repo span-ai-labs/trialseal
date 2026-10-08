@@ -17,7 +17,6 @@ plan since the first sealing. It is never chosen when the analysis is run.
 from __future__ import annotations
 
 import argparse
-import csv
 import datetime as dt
 import json
 import pathlib
@@ -30,6 +29,7 @@ from trialforecast.anchors import TimestampService, verifying_services
 from trialforecast.batch import InvalidForecast
 from trialforecast.screening import ScreeningRecord
 from trialforecast.sealing import NotInSeal, Plan, SealNotAnchored, TamperedSeal, read_sealed_study
+from trialforecast.studyfiles import write_table
 from trialforecast.wording import counted
 
 SCREENING_LOG = pathlib.Path("screening") / "screening.jsonl"
@@ -44,13 +44,6 @@ DIFFERENCE = ("mean_diff", "ci_low", "ci_high", "p_two_sided")
 # --- tables ------------------------------------------------------------------------
 
 
-def _write_table(path: pathlib.Path, columns: Iterable[str], rows: Iterable[Iterable]) -> None:
-    with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f, lineterminator="\n")
-        writer.writerow(columns)
-        writer.writerows([["" if value is None else value for value in row] for row in rows])
-
-
 def _write_summary(directory: pathlib.Path, produced: dict, seals: Iterable[str]) -> None:
     """Everything an analysis produced, with the fingerprints of the seals it was made from for a reader to check."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -62,17 +55,39 @@ def _write_summary(directory: pathlib.Path, produced: dict, seals: Iterable[str]
 def _write_forecaster_tables(directory: pathlib.Path, produced: dict) -> None:
     """Each forecaster's scores and calibration, on the primary analysis set and on all sponsors, and one row per model."""
     tables = [(label, name, row) for key, label in SETS_OF_TRIALS for name, row in produced[key].items()]
-    _write_table(directory / "forecasters.csv", ("trials", "forecaster", *SCORES),
+    write_table(directory / "forecasters.csv", ("trials", "forecaster", *SCORES),
                  [(label, name, *(row[score] for score in SCORES)) for label, name, row in tables])
     bin_columns = ("from", "to", "n", "mean_forecast", "share_positive")
-    _write_table(directory / "calibration.csv", ("trials", "forecaster", *bin_columns),
+    write_table(directory / "calibration.csv", ("trials", "forecaster", *bin_columns),
                  [(label, name, *(bin_[c] for c in bin_columns)) for label, name, row in tables for bin_ in row["calibration"]])
-    _write_table(directory / "models.csv", MODEL_COLUMNS, [[row[c] for c in MODEL_COLUMNS] for row in produced["models"]])
+    write_table(directory / "models.csv", MODEL_COLUMNS, [[row[c] for c in MODEL_COLUMNS] for row in produced["models"]])
     _draw_calibration(directory / "calibration.png", produced["forecasters"])
 
 
 def _difference_cells(difference: dict | None) -> list:
     return [(difference or {}).get(column) for column in DIFFERENCE]
+
+
+def _write_effect_sizes(directory: pathlib.Path, produced: dict, own: str) -> None:
+    """Hazard-ratio scores against each baseline, as reported and with missing hazard ratios counted as no effect."""
+    effect_sizes = [("hazard ratios reported", produced["effect_size"]),
+                    ("missing counted as no effect", produced["effect_size_missing_as_no_effect"])]
+    write_table(
+        directory / "effect_size.csv",
+        ("analysis", "baseline", "n_trials", "crps_forecaster", "crps_baseline", "interval_score_forecaster",
+         "interval_score_baseline", "coverage_forecaster", "coverage_baseline", *DIFFERENCE, "scored_at_baseline",
+         "hazard_ratio_awaited", "hazard_ratio_missing", "hazard_ratio_for_another_endpoint"),
+        [(label, baseline, e["n_trials"], e["crps"][own], e["crps"][baseline], e["interval_score"][own],
+          e["interval_score"][baseline], e["coverage"][own], e["coverage"][baseline],
+          *_difference_cells(e["difference"]), len(e["scored_at_baseline"]), len(e["hazard_ratio_awaited"]),
+          len(e["hazard_ratio_missing"]), len(e["hazard_ratio_for_another_endpoint"]))
+         for label, by_baseline in effect_sizes for baseline, e in by_baseline.items()],
+    )
+
+
+def write_follow_up(directory: pathlib.Path, follow_up: dict, plan: Plan, seals: Iterable[str]) -> None:
+    _write_summary(directory, follow_up, seals)
+    _write_effect_sizes(directory, follow_up, plan.forecaster)
 
 
 def write_look(directory: pathlib.Path, look: dict, seals: Iterable[str]) -> None:
@@ -87,7 +102,7 @@ def write_final(directory: pathlib.Path, final: dict, plan: Plan, seals: Iterabl
     _write_forecaster_tables(directory, final)
     own, reference = plan.forecaster, plan.reference
     comparisons = {"primary": final["primary"], **final["sensitivity"]}
-    _write_table(
+    write_table(
         directory / "comparisons.csv",
         ("comparison", "n_trials", "n_drug_groups", "brier_forecaster", "brier_reference", *DIFFERENCE,
          "scored_at_reference", "forecast_not_before_readout"),
@@ -95,21 +110,9 @@ def write_final(directory: pathlib.Path, final: dict, plan: Plan, seals: Iterabl
           *_difference_cells(c["difference"]), len(c["scored_at_reference"]), len(c["forecast_not_before_readout"]))
          for name, c in comparisons.items()],
     )
-    effect_sizes = [("hazard ratios reported", final["effect_size"]),
-                    ("missing counted as no effect", final["effect_size_missing_as_no_effect"])]
-    _write_table(
-        directory / "effect_size.csv",
-        ("analysis", "baseline", "n_trials", "crps_forecaster", "crps_baseline", "interval_score_forecaster",
-         "interval_score_baseline", "coverage_forecaster", "coverage_baseline", *DIFFERENCE, "scored_at_baseline",
-         "hazard_ratio_awaited", "hazard_ratio_missing", "hazard_ratio_for_another_endpoint"),
-        [(label, baseline, e["n_trials"], e["crps"][own], e["crps"][baseline], e["interval_score"][own],
-          e["interval_score"][baseline], e["coverage"][own], e["coverage"][baseline],
-          *_difference_cells(e["difference"]), len(e["scored_at_baseline"]), len(e["hazard_ratio_awaited"]),
-          len(e["hazard_ratio_missing"]), len(e["hazard_ratio_for_another_endpoint"]))
-         for label, by_baseline in effect_sizes for baseline, e in by_baseline.items()],
-    )
+    _write_effect_sizes(directory, final, own)
     for name, label in (("lead_time", "lead_time"), ("versions", "version")):
-        _write_table(directory / f"{name}.csv", (label, "n_trials", "brier_forecaster", "brier_reference"),
+        write_table(directory / f"{name}.csv", (label, "n_trials", "brier_forecaster", "brier_reference"),
                      [(row[label], row["n_trials"], row["brier"][own], row["brier"][reference]) for row in final[name]])
     _draw_differences(directory / "differences.png", comparisons)
 
@@ -187,8 +190,10 @@ def main(
     """Regenerate every registered table and figure that is due: `trialseal-analysis --study <directory>`."""
     parser = argparse.ArgumentParser(prog="trialseal-analysis", description=__doc__.split("\n\n")[0])
     parser.add_argument("--study", default=".", help="the study directory (default: the current directory)")
-    root = pathlib.Path(parser.parse_args(arguments).study)
-    today = today or dt.date.today()
+    parser.add_argument("--hazard-ratios-searched-on", type=dt.date.fromisoformat,
+                        help="for the effect-size follow-up: the day the search for hazard ratios was finished")
+    options = parser.parse_args(arguments)
+    root, today = pathlib.Path(options.study), today or dt.date.today()
 
     try:
         study = read_sealed_study(root / "seals", root / "private", services or verifying_services())
@@ -221,6 +226,14 @@ def main(
         else:
             write_final(results_dir / analysis.FINAL, final, plan, study.seals)
             _say_final(final, plan)
+        try:
+            follow_up = analysis.effect_size_follow_up(study.batches, log, plan, today, record_file,
+                                                       options.hazard_ratios_searched_on)
+        except NotDue as not_yet:
+            print(not_yet)
+        else:
+            write_follow_up(results_dir / analysis.FOLLOW_UP, follow_up, plan, study.seals)
+            print(f"effect-size follow-up written to {results_dir / analysis.FOLLOW_UP}")
     except (AlreadyRun, NotReady, ValueError, TypeError, KeyError) as problem:
         # The last three are a record of analyses that cannot be read, or a reference without a forecast.
         print(f"NOT REGENERATED: {problem}")

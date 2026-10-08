@@ -29,7 +29,7 @@ def study_dir(tmp_path):
     said = {"NCT1": 0.9, "NCT2": 0.3, "NCT3": 0.7, "NCT4": 0.5}
     batch = build_batch(BATCH_1, trials, screening,
                         [base_rate(), FixedForecaster("span", said, hazard_ratio=(0.72, 0.6, 0.86))])
-    sealed = seal_batch(batch, screening, REGISTERED, SPAN_AGAINST_BASE_RATE, None, SERVICES, today=BATCH_1)
+    sealed = seal_batch(batch, screening, (), REGISTERED, SPAN_AGAINST_BASE_RATE, None, SERVICES, today=BATCH_1)
     write_sealed_batch(sealed, tmp_path / "seals", tmp_path / "private")
     for adjudication in (
         both_adjudicated("NCT1", "positive", readout=dt.date(2027, 2, 1), hazard_ratio=0.7,
@@ -107,7 +107,8 @@ def test_the_final_analysis_is_written_as_every_registered_table_and_figure(stud
     comparisons = table(final_dir / "comparisons.csv")
     assert [row["comparison"] for row in comparisons] == [
         "primary", "all sponsors", "last forecast before readout", "without non-English disclosures",
-        "void counted as negative", "unresolved imputed as negative", "unresolved imputed as positive"]
+        "void counted as negative", "unresolved imputed as negative", "unresolved imputed as positive",
+        "with sources read after the forecasts were opened"]
     primary = comparisons[0]
     assert float(primary["brier_forecaster"]) == pytest.approx((0.01 + 0.09 + 0.09) / 3)
     assert float(primary["brier_reference"]) == pytest.approx((0.2025 + 0.3025 + 0.2025) / 3)
@@ -174,3 +175,20 @@ def test_a_study_in_which_no_trial_can_be_scored_ends_without_a_claim_or_a_crash
     assert regenerate(study_dir, EIGHTEEN_MONTHS) == 0
     assert regenerate(study_dir, TWENTY_FOUR_MONTHS) == 0
     assert "no trial could be scored, so no claim is made" in capsys.readouterr().out
+
+
+def test_the_effect_size_follow_up_is_written_six_months_after_the_final_analysis(study_dir, capsys):
+    regenerate(study_dir, EIGHTEEN_MONTHS)
+    regenerate(study_dir, TWENTY_FOUR_MONTHS)
+    assert "effect-size follow-up is fixed for 2029-05-02" in capsys.readouterr().out
+    assert not (study_dir / "results" / "effect_size_follow_up").exists()
+    # It is made once, so it is not made until the search for hazard ratios is said to be finished.
+    assert regenerate(study_dir, dt.date(2029, 5, 2)) == 1
+    assert "search for hazard ratios" in capsys.readouterr().out and not (study_dir / "results" / "effect_size_follow_up").exists()
+    assert main(["--study", str(study_dir), "--hazard-ratios-searched-on", "2029-05-02"], today=dt.date(2029, 5, 2), services=SERVICES) == 0
+    assert regenerate(study_dir, dt.date(2029, 6, 1)) == 0            # regenerated afterwards without being told again
+    follow_up_dir = study_dir / "results" / "effect_size_follow_up"
+    assert sorted(p.name for p in follow_up_dir.iterdir()) == ["effect_size.csv", "summary.json"]
+    summary = json.loads((follow_up_dir / "summary.json").read_text())
+    assert (summary["readouts_to"], summary["hazard_ratios_to"]) == ("2028-11-02", "2029-05-02")
+    assert [row["analysis"] for row in table(follow_up_dir / "effect_size.csv")] == ["hazard ratios reported", "missing counted as no effect"]

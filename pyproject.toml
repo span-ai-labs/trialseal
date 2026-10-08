@@ -26,6 +26,8 @@ trialforecast-universe = "trialforecast.universe:main"
 trialseal-verify = "trialforecast.sealing:verify_command"
 trialseal-analysis = "trialforecast.report:main"
 trialseal-pilot = "trialforecast.pilot:main"
+trialseal-screening = "trialforecast.screen:main"
+trialseal-reference = "trialforecast.reference:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -13,7 +13,11 @@ Vocabulary is in `CONTEXT.md`, decisions in `docs/adr/`, the spec and tickets in
 - `src/trialforecast/universe.py` — flatten a snapshot into candidates (time-to-event primary endpoint, not withdrawn), each with its scored endpoint, reference class, alias record and any exclusion-review tag; writes `data/universe/`.
 - `src/trialforecast/forecasting.py` — the forecast shape, the contract every forecaster meets, and the base-rate forecaster.
 - `src/trialforecast/models.py` — frontier models as shipped: the prompt every model sees, one adapter per provider's own library, each trial asked about several times and the answers combined by a fixed rule, and everything recorded with the forecast. The models are listed in `study/models.json`.
-- `src/trialforecast/screening.py` — screening records and which candidates are eligible.
+- `src/trialforecast/screening.py` — screening records (decision, evidence, confidence, confirmation), design rulings, and the one gate that decides which candidates are eligible trials.
+- `src/trialforecast/screen.py` — the screening command: the worklist for a searcher, taking findings into the log, the queues for the study lead, and the summary.
+- `src/trialforecast/traces.py` — the one reader of readout traces; `data/readout_trace/TRACING_BRIEF.md` is the method a trace follows.
+- `src/trialforecast/reference.py` — the reference set: base rates and typical hazard ratios by reference class, the adjudicators' sample, and the figures frozen for registration.
+- `src/trialforecast/studyfiles.py` — where a study directory keeps things.
 - `src/trialforecast/batch.py` — builds a batch (refusing any trial not screened as eligible), fingerprints it, writes and reads it.
 - `src/trialforecast/adjudication.py` — adjudications of each source, reconciliations, and the rules that turn them into a trial's result (source ranking, readout date, hazard-ratio window, blindness).
 - `src/trialforecast/sealing.py` — seals a batch: one commitment per forecast, a seal with no forecast in it, anchors from two time-stamping services, publication of the seal alone, and verification of a revealed forecast. Every seal carries the registered plan and the fingerprint of the seal before it, and a sealed study is read back only as one unbroken chain.
@@ -42,6 +46,8 @@ uv run trialforecast-universe                # refined universe from the latest 
 uv run pytest
 uv run trialseal-analysis                    # every registered table and figure that is due, into results/
 uv run trialseal-pilot probe                 # then forecast, then report: the retrospective pilot, below
+uv run trialseal-screening summary           # where every candidate stands; also worklist, import, confirm, design
+uv run trialseal-reference report            # base rates from the traced trials; also sample, freeze
 ```
 
 ## The retrospective pilot
@@ -101,5 +107,7 @@ uv run trialseal-verify seals/2026-11-02 revealed/NCT00000000.jsonl
 Built: snapshot, candidate universe, scoring, the record pipeline (screening, base-rate forecaster,
 batches, adjudication rules), sealing with reveal verification, frontier models as forecasters, and the registered
 analysis plan with its one command, and the retrospective pilot (probes run for two models and forecasts for one; outcomes
-await adjudication). Not built yet: real screening, the reference set, the statistical baselines and the
-Span forecaster, readout detection, the reveal step and scoreboard. Nothing has been registered or sealed.
+await adjudication). The screening machinery and the reference set are built: 338 past trials are traced, with provisional base rates,
+and screening has recorded what the registry and the traces already show. Not done yet: the full search of every
+candidate (it must fall within 14 days of the first sealing), the re-checks and the adjudicators' sample. Not built
+yet: the statistical baselines and the Span forecaster, readout detection, the reveal step and scoreboard. Nothing has been registered or sealed.

@@ -98,7 +98,12 @@ On the two probes together it recalled no result that was disclosed after the mo
 
 It gave the right result with a date more than 3 months before the readout on record for: NCT03456063, NCT03602859, NCT03997123, NCT04182204, NCT04338399, NCT04475939, NCT04712097, NCT05008783, NCT05204628, NCT05450692, NCT05668988. Either it inferred these, or an earlier disclosure was missed; their sources should be looked at again.
 
-Forecasts have not yet been made for all 5 pilot trials.
+### Scores
+
+Forecasts made with no web access for 5 pilot trials; 0 scored at the reference because no forecast was produced. On one probe or the other it said it knew the result of 1 of them, without recalling it by the test above. Scores without those are not shown apart: the difference would give away single forecasts.
+
+- Brier score, model minus base rate: -0.134 over 5 trials.
+- CRPS of the log hazard ratio, model minus effect-size baseline: not shown for 1 trial, since it would give single forecasts away.
 
 ## gpt-6.1-sol
 
@@ -199,6 +204,10 @@ This pilot tests the method: the rules, the tooling and the adjudicators' agreem
 
 From the spread of per-trial score differences, for a paired comparison at two-sided 5% with 80% power. Trials of one drug are treated as independent, so the true requirement is somewhat larger. The spread is that of frontier models as shipped against the base rate; the forecaster that carries the registered claim may differ.
 
+- claude-opus-5-5, Brier score, model minus base rate: mean difference -0.134, standard deviation 0.078 (95% interval 0.047 to 0.225) over 5 trials.
+  - With that spread, 120 trials detect a mean difference of 0.020 (or 0.058 if the spread is at the upper end of its interval); 60 trials detect a mean difference of 0.028 (or 0.082 if the spread is at the upper end of its interval).
+  - Trials needed to detect an assumed mean difference: 0.01 needs 483; 0.02 needs 121; 0.03 needs 54; 0.05 needs 20.
+- claude-opus-5-5, CRPS of the log hazard ratio, model minus effect-size baseline: too few trials, or no spread among them, to measure one.
 - gpt-6.1-sol, Brier score, model minus base rate: mean difference -0.058, standard deviation 0.114 (95% interval 0.085 to 0.174) over 17 trials.
   - With that spread, 120 trials detect a mean difference of 0.029 (or 0.044 if the spread is at the upper end of its interval); 60 trials detect a mean difference of 0.041 (or 0.063 if the spread is at the upper end of its interval).
   - Trials needed to detect an assumed mean difference: 0.01 needs 1025; 0.02 needs 257; 0.03 needs 114; 0.05 needs 41.

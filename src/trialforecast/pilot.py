@@ -28,16 +28,15 @@ from typing import Callable, Iterable, Mapping
 import numpy as np
 from scipy.stats import chi2, norm
 
-from trialforecast import records, scoring, universe
-from trialforecast.adjudication import AdjudicationLog, TrialResult, read_log, results
+from trialforecast import records, scoring, traces
+from trialforecast.adjudication import TrialResult, adjudicator_agreement, read_log, results
 from trialforecast.analysis import log_hazard_ratio, scored_hazard_ratio
-from trialforecast.batch import BatchTrial
-from trialforecast.dates import add_months
 from trialforecast.forecasting import BaseRateForecaster, Candidate, Forecast
 from trialforecast.models import (
     OUTAGE, Ask, ModelForecaster, ModelSpec, ModelUnavailable, ask_provider, ask_through_outages, last_json_object,
     load_keys, read_models, trial_information, writable,
 )
+from trialforecast.studyfiles import latest_snapshot, read_records, registry_records, sealed_as, write_table
 from trialforecast.wording import counted
 
 NOT_THE_EVIDENCE = (
@@ -60,8 +59,6 @@ MINIMUM_CLASS_READOUTS = 5  # a reference class with fewer earlier readouts take
 MINIMUM_REFERENCE_READOUTS = 10  # and with fewer than this in all, there is no base rate to speak of
 FEWEST_SHOWN_APART = 3  # a mean over fewer trials than this would give away single forecasts
 
-POSITIVE_RESULTS, NEGATIVE_RESULTS = ("met", "stopped_efficacy"), ("not_met", "stopped_futility")
-HAZARD_RATIO_WINDOW_MONTHS = 6  # ADR-0011
 # What today's registry record can show only because the trial is over. Past versions of records could not be
 # fetched, so a model is shown today's record without these.
 HIDDEN_FROM_MODELS = ("status", "primary_completion_date", "primary_completion_type", "enrollment", "enrollment_type")
@@ -76,6 +73,7 @@ POWER, ALPHA = 0.8, 0.05
 # adjudicators have still to read the pilot trials.
 PRIVATE = pathlib.Path("private") / "pilot"
 PILOT_ADJUDICATION = pathlib.Path("adjudication") / "pilot"
+PILOT_TRACES = pathlib.Path("study") / "pilot_traces.json"
 
 
 class ProbesIncomplete(Exception):
@@ -106,18 +104,11 @@ def traced_trials(trace_files: Iterable[pathlib.Path]) -> list[PastTrial]:
     A traced hazard ratio is kept only if it became public within six months of the readout (ADR-0011).
     """
     found = []
-    for trace_file in trace_files:
-        with trace_file.open(newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                result = (row.get("primary_result") or "").strip()
-                if row["disclosed"] == "yes" and result in POSITIVE_RESULTS + NEGATIVE_RESULTS:
-                    readout = dt.date.fromisoformat(row["first_disclosure_date"])
-                    value, public_on = ((row.get(column) or "").strip() for column in ("hr_value", "hr_first_public_date"))
-                    in_time = bool(value and public_on) and (
-                        dt.date.fromisoformat(public_on) <= add_months(readout, HAZARD_RATIO_WINDOW_MONTHS))
-                    found.append(PastTrial(row["nct"], readout, result in POSITIVE_RESULTS, float(value) if in_time else None))
-                elif row["disclosed"] == "no" and not result:
-                    found.append(PastTrial(row["nct"], None, None))
+    for row in traces.read_traces(trace_files):
+        if row.found in traces.CLEAR:
+            found.append(PastTrial(row.nct, row.readout_date, row.found == traces.POSITIVE, row.hazard_ratio))
+        elif row.found == traces.UNRESOLVED:
+            found.append(PastTrial(row.nct, None, None))
     return found
 
 
@@ -136,11 +127,7 @@ def with_adjudicated(
         if result is None:
             merged.append(trial)
         elif result.readout_date is not None:
-            record = candidates[trial.nct]
-            sponsor_type = record.get("sponsor_type")  # a record read from a table carries NaN where there is none
-            sealed_as = BatchTrial(trial.nct, record["scored_endpoint"], sponsor_type if isinstance(sponsor_type, str) else None,
-                                   record["endpoint_type"])
-            hazard_ratio, _ = scored_hazard_ratio(result, sealed_as, as_of)
+            hazard_ratio, _ = scored_hazard_ratio(result, sealed_as(candidates[trial.nct]), as_of)
             merged.append(PastTrial(trial.nct, result.readout_date, result.outcome == "positive", hazard_ratio, adjudicated=True))
     return merged
 
@@ -367,45 +354,6 @@ def pilot_plan(spec: ModelSpec, probe_records: Iterable[ProbeRecord], trials: It
     return PilotPlan(latest, buffer, after)
 
 
-# --- agreement between the adjudicators --------------------------------------------------
-
-
-def adjudicator_agreement(log: AdjudicationLog) -> dict:
-    """How often the two adjudicators' first readings of a source agreed.
-
-    First readings are compared, before any correction or reconciliation, since
-    those are what two people reached independently. Cohen's kappa is given for
-    the outcome, and is undefined when both called every source the same way.
-    Hazard ratios are compared wherever either recorded one, and agree when they
-    name the same endpoint and match to two decimal places. A source read by one
-    person, or by more than two, is counted and not compared.
-    """
-    first: dict[tuple, dict[str, object]] = {}
-    for reading in sorted(log.adjudications, key=lambda a: a.recorded_on):  # a stable sort: log order breaks ties
-        first.setdefault((reading.nct, reading.source_type, reading.source), {}).setdefault(reading.adjudicator, reading)
-    pairs = [tuple(by_adjudicator[name] for name in sorted(by_adjudicator))
-             for by_adjudicator in first.values() if len(by_adjudicator) == 2]
-    agreed = sum(a.outcome == b.outcome for a, b in pairs)
-    with_ratio = [(a, b) for a, b in pairs if a.hazard_ratio is not None or b.hazard_ratio is not None]
-
-    def same_ratio(a, b) -> bool:
-        if a.hazard_ratio is None or b.hazard_ratio is None:
-            return False
-        same_endpoint = " ".join(a.hazard_ratio_endpoint.casefold().split()) == " ".join(b.hazard_ratio_endpoint.casefold().split())
-        return same_endpoint and round(a.hazard_ratio, 2) == round(b.hazard_ratio, 2)
-
-    kappa = None
-    if pairs:
-        observed = agreed / len(pairs)
-        outcomes = {reading.outcome for pair in pairs for reading in pair}
-        by_chance = sum(sum(a.outcome == o for a, _ in pairs) * sum(b.outcome == o for _, b in pairs)
-                        for o in outcomes) / len(pairs) ** 2
-        kappa = None if by_chance == 1 else (observed - by_chance) / (1 - by_chance)
-    return {"sources": len(pairs), "not_read_by_two": len(first) - len(pairs), "outcome_agreed": agreed, "kappa": kappa,
-            "disclosure_date_agreed": sum(a.disclosed_on == b.disclosed_on for a, b in pairs),
-            "hazard_ratio_compared": len(with_ratio), "hazard_ratio_agreed": sum(same_ratio(a, b) for a, b in with_ratio)}
-
-
 # --- what the pilot measures ---------------------------------------------------------------
 
 
@@ -507,6 +455,9 @@ def _recall_table(rows: list[dict]) -> list[str]:
 
 
 def _mean_line(label: str, values: list[float]) -> str:
+    """A mean score difference, unless it rests on so few trials that it would give a single forecast away."""
+    if 0 < len(values) < FEWEST_SHOWN_APART:
+        return f"- {label}: not shown for {counted(len(values), 'trial')}, since it would give single forecasts away."
     mean = "not measured" if not values else f"{sum(values) / len(values):+.3f}"
     return f"- {label}: {mean} over {counted(len(values), 'trial')}."
 
@@ -657,18 +608,26 @@ class _Invocation:
         return ModelForecaster(spec, self.ask).name
 
     def answers(self, spec: ModelSpec) -> list[ProbeRecord]:
-        return _read(self.root / PRIVATE / "probes" / f"{self.name(spec)}.jsonl", ProbeRecord)
+        return read_records(self.root / PRIVATE / "probes" / f"{self.name(spec)}.jsonl", ProbeRecord)
 
     def forecasts(self, spec: ModelSpec) -> dict[str, Forecast]:
-        return {f.nct: f for f in _read(self.root / PRIVATE / f"{self.name(spec)}.jsonl", Forecast)}
+        return {f.nct: f for f in read_records(self.root / PRIVATE / f"{self.name(spec)}.jsonl", Forecast)}
 
 
-def _read(path: pathlib.Path, record_type: type) -> list:
-    return records.read(path, record_type) if path.exists() else []
+def _pilot_traces(root: pathlib.Path, starting: bool) -> list[pathlib.Path]:
+    """The trace files the pilot rests on: those that existed when it was begun, recorded then and kept to since.
 
-
-def _latest_snapshot(snapshots: pathlib.Path) -> pathlib.Path:
-    return sorted(d for d in snapshots.iterdir() if (d / "studies.jsonl.gz").exists())[-1]
+    Trials traced later would each need both probes before any model's buffer could
+    be chosen again, so they join only when the list is deliberately redrawn.
+    """
+    listed = root / PILOT_TRACES
+    if not listed.exists():
+        if not starting:
+            raise ValueError("the pilot has not been begun: run its probe step first")
+        names = sorted(path.name for path in (root / "data" / "readout_trace").glob("trace_*.csv"))
+        listed.parent.mkdir(parents=True, exist_ok=True)
+        listed.write_text(json.dumps(names, indent=2) + "\n", encoding="utf-8")
+    return [root / "data" / "readout_trace" / name for name in json.loads(listed.read_text(encoding="utf-8"))]
 
 
 def _require_priced(spec: ModelSpec) -> None:
@@ -751,10 +710,7 @@ def _report(run: _Invocation) -> None:
            "; ".join(models), "yes" if nct in adjudicated else "no") for nct, models in sorted(to_adjudicate.items())]),
     )
     for name, columns, rows in tables:
-        with (out / name).open("w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f, lineterminator="\n")
-            writer.writerow(columns)
-            writer.writerows([["" if value is None or value != value else value for value in row] for row in rows])
+        write_table(out / name, columns, rows)
     print(f"pilot report written to {out / 'report.md'}")
 
 
@@ -787,12 +743,11 @@ def main(
             specs = [spec for spec in specs if spec.model == options.model]
             if not specs:
                 raise ValueError(f"{options.model} is not in the roster")
-        snapshot = pathlib.Path(options.snapshot) if options.snapshot else _latest_snapshot(root / "snapshots")
-        table, _ = universe.load_snapshot(snapshot)
-        candidates = {row["nct"]: row for row in table.to_dict("records")}
+        snapshot = pathlib.Path(options.snapshot) if options.snapshot else latest_snapshot(root)
+        candidates = registry_records(snapshot)
         # A trial can be probed and forecast only if the snapshot holds its record with a scored endpoint and a
         # reference class.
-        trials = [t for t in traced_trials(sorted((root / "data" / "readout_trace").glob("trace_*.csv")))
+        trials = [t for t in traced_trials(_pilot_traces(root, starting=options.step == "probe"))
                   if all(isinstance(candidates.get(t.nct, {}).get(field), str) for field in ("scored_endpoint", "reference_class"))]
         run = _Invocation(root, specs, ask, today or dt.datetime.now(dt.timezone.utc).date(), wait, options.budget_usd,
                           snapshot.name, candidates, trials)

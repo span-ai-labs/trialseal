@@ -243,7 +243,7 @@ def test_each_sensitivity_analysis_changes_only_what_it_names():
     held = as_of([early, late], adjudications)
 
     primary = primary_comparison(held, "stand_in", "base_rate", n_boot=FEW_RESAMPLES)
-    analyses = sensitivity_analyses(held, "stand_in", "base_rate", n_boot=FEW_RESAMPLES)
+    analyses = sensitivity_analyses(held, held, "stand_in", "base_rate", n_boot=FEW_RESAMPLES)
 
     # First forecasts were 0.9: a positive trial scores 0.01, a negative or void one 0.81. Last forecasts were 0.6.
     assert (primary["n_trials"], primary["brier"]["stand_in"]) == (2, pytest.approx(0.01))
@@ -254,6 +254,7 @@ def test_each_sensitivity_analysis_changes_only_what_it_names():
         "void counted as negative": (3, (0.01 + 0.81 + 0.01) / 3),
         "unresolved imputed as negative": (3, (0.01 + 0.01 + 0.81) / 3),
         "unresolved imputed as positive": (3, 0.01),
+        "with sources read after the forecasts were opened": (2, 0.01),     # none were, here
     }
     assert sorted(analyses) == sorted(expected)
     for name, (n_trials, brier) in expected.items():
@@ -707,3 +708,127 @@ def test_a_missing_hazard_ratio_is_counted_as_no_effect_in_a_sensitivity_analysi
     # A forecast of 0.70 is further from no effect than the baseline's 0.84, so it scores worse on those two trials.
     assert with_missing["crps"]["stand_in"] > with_missing["crps"]["base_rate"]
     assert with_missing["hazard_ratio_missing"] == ["NCT2"] and with_missing["hazard_ratio_for_another_endpoint"] == ["NCT3"]
+
+
+# --- decided on 2026-10-09: readings after a reveal, and the effect-size follow-up ---------------
+
+
+def test_a_source_read_after_the_reveal_changes_only_its_own_sensitivity_analysis(tmp_path):
+    batches, log = a_study_of(120)
+    reveal = dt.date(2027, 9, 1)
+    opened = [ForecastAccess(nct="NCT0002", person=who, opened_on=reveal) for who in ("first", "second")]
+    # After the reveal both adjudicators read a paper that reverses NCT0002. They are not blind for it.
+    paper = both_adjudicated("NCT0002", "negative", readout=dt.date(2027, 12, 1), source_type="paper_or_regulator",
+                             source="https://example.test/paper")
+    plain = run_final((batches, log), EIGHTEEN_MONTHS, tmp_path / "plain.jsonl")
+    final = run_final((batches, AdjudicationLog([*log.adjudications, *paper], forecast_access=opened)), EIGHTEEN_MONTHS,
+                      tmp_path / "revealed.jsonl")
+    assert final["primary"]["brier"] == plain["primary"]["brier"]          # the blind reading still decides
+    assert final["set_aside"] == {"NCT0002": ["https://example.test/paper"]}
+    counted_too = final["sensitivity"]["with sources read after the forecasts were opened"]
+    assert counted_too["n_trials"] == 120 and counted_too["brier"] != plain["primary"]["brier"]
+    assert plain["sensitivity"]["with sources read after the forecasts were opened"]["brier"] == plain["primary"]["brier"]
+
+
+SIX_MONTHS_ON = dt.date(2028, 11, 2)    # six months after the final analysis date
+
+
+def a_study_with_late_hazard_ratios():
+    """120 trials read out in March 2028; half report a hazard ratio at once, half four months later, after the final date."""
+    batches, log = a_study_of(120, readout=dt.date(2028, 3, 1))
+    later = dt.date(2028, 7, 1)
+    readings = []
+    for reading in log.adjudications:
+        if int(reading.nct[3:]) % 2:
+            readings.append(reading)
+            continue
+        readings.append(dataclasses.replace(reading, hazard_ratio=None, hazard_ratio_endpoint=None))
+        readings.append(dataclasses.replace(reading, source_type="conference", source="https://example.test/congress",
+                                            disclosed_on=later, recorded_on=later))
+    # A log is only ever added to, so the later readings come after everything recorded before them.
+    return batches, AdjudicationLog(sorted(readings, key=lambda a: a.recorded_on))
+
+
+def follow_up(study, today, record_file, searched_on=SIX_MONTHS_ON, plan=PLAN, n_boot=FEW_RESAMPLES):
+    batches, log = study
+    return analysis.effect_size_follow_up(batches, log, plan, today, record_file, hazard_ratios_searched_on=searched_on, n_boot=n_boot)
+
+
+def test_hazard_ratios_that_arrive_after_the_final_date_are_scored_once_six_months_later(tmp_path):
+    batches, log = a_study_with_late_hazard_ratios()
+    record_file = tmp_path / "analyses.jsonl"
+    as_of_final = AdjudicationLog([a for a in log.adjudications if a.recorded_on <= EIGHTEEN_MONTHS])
+    with pytest.raises(NotDue, match="final analysis has not been run"):
+        follow_up((batches, log), SIX_MONTHS_ON, record_file)
+
+    final = run_final((batches, as_of_final), EIGHTEEN_MONTHS, record_file)
+    assert final["effect_size"]["base_rate"]["n_trials"] == 60 and len(final["effect_size"]["base_rate"]["hazard_ratio_awaited"]) == 60
+    with pytest.raises(NotDue, match="2028-11-02"):
+        follow_up((batches, log), SIX_MONTHS_ON - dt.timedelta(days=1), record_file)
+    # It is made once, so it waits until someone says the search for hazard ratios is finished, on or after its date.
+    for unfinished in (None, SIX_MONTHS_ON - dt.timedelta(days=1), SIX_MONTHS_ON + dt.timedelta(days=9)):
+        with pytest.raises(NotReady, match="search for hazard ratios"):
+            follow_up((batches, log), SIX_MONTHS_ON + dt.timedelta(days=5), record_file, searched_on=unfinished)
+
+    made = follow_up((batches, log), SIX_MONTHS_ON, record_file)
+    assert (made["kind"], made["readouts_to"], made["hazard_ratios_to"]) == ("effect_size_follow_up", EIGHTEEN_MONTHS, SIX_MONTHS_ON)
+    # The same 120 trials the final analysis scored, now each with its hazard ratio.
+    assert made["effect_size"]["base_rate"]["n_trials"] == 120 == final["primary"]["n_trials"]
+    assert made["effect_size"]["base_rate"]["hazard_ratio_awaited"] == []
+    assert set(made) == {"kind", "run_on", "readouts_to", "hazard_ratios_to", "effect_size", "effect_size_missing_as_no_effect"}
+    # Made once, like the others; and the final analysis is still regenerated exactly as it was.
+    later = SIX_MONTHS_ON + dt.timedelta(days=30)
+    assert follow_up((batches, log), later, record_file, searched_on=None, n_boot=7) == made
+    assert [r.kind for r in records.read(record_file, AnalysisRecord)] == ["final_analysis", "effect_size_follow_up"]
+    assert run_final((batches, log), later, record_file) == final
+    with pytest.raises(AlreadyRun):
+        follow_up((batches, log), later, record_file, plan=dataclasses.replace(PLAN, effect_size_baselines=("base_rate", "other")))
+
+
+def test_the_follow_up_scores_the_trials_of_the_final_analysis_and_no_others(tmp_path):
+    batches, log = a_study_of(121, readout=dt.date(2028, 3, 1))
+    record_file = tmp_path / "analyses.jsonl"
+    # NCT0001 reads out a month after the final date: the final analysis does not score it, so nor does the follow-up.
+    after_final = EIGHTEEN_MONTHS + dt.timedelta(days=30)
+    readings = [dataclasses.replace(a, disclosed_on=after_final, recorded_on=after_final) if a.nct == "NCT0001" else a
+                for a in log.adjudications]
+    log = AdjudicationLog(sorted(readings, key=lambda a: a.recorded_on))
+    as_of_final = AdjudicationLog([a for a in log.adjudications if a.recorded_on <= EIGHTEEN_MONTHS])
+    looked = [screened("NCT0001", "eligible", on=EIGHTEEN_MONTHS)]
+    assert run_final((batches, as_of_final), EIGHTEEN_MONTHS, record_file, screening=looked)["primary"]["n_trials"] == 120
+    made = follow_up((batches, log), SIX_MONTHS_ON, record_file)
+    assert made["effect_size"]["base_rate"]["n_trials"] == 120
+
+
+def test_a_hazard_ratio_read_after_the_reveal_is_still_the_hazard_ratio_scored(tmp_path):
+    batches, log = a_study_with_late_hazard_ratios()
+    record_file = tmp_path / "analyses.jsonl"
+    as_of_final = AdjudicationLog([a for a in log.adjudications if a.recorded_on <= EIGHTEEN_MONTHS])
+    final = run_final((batches, as_of_final), EIGHTEEN_MONTHS, record_file)
+    # The forecasts are revealed the day after the final analysis. Every later hazard ratio is read by people who have seen them.
+    revealed = [ForecastAccess(nct=t.nct, person=who, opened_on=EIGHTEEN_MONTHS + dt.timedelta(days=1))
+                for t in batches[0].trials for who in ("first", "second")]
+    after_reveal = AdjudicationLog(log.adjudications, forecast_access=revealed)
+    made = follow_up((batches, after_reveal), SIX_MONTHS_ON, record_file)
+    scored = made["effect_size"]["base_rate"]
+    assert scored["n_trials"] == 120 and len(scored["hazard_ratio_read_after_reveal"]) == 60
+    assert final["effect_size"]["base_rate"]["hazard_ratio_read_after_reveal"] == []
+
+
+def test_a_follow_up_to_a_study_that_made_no_claim_tests_nothing(tmp_path):
+    batches, log = a_study_of(40, readout=dt.date(2028, 3, 1))
+    record_file = tmp_path / "analyses.jsonl"
+    run_final((batches, log), EIGHTEEN_MONTHS, record_file)
+    assert run_final((batches, log), TWENTY_FOUR_MONTHS, record_file)["decision"] == "estimate_only"
+    made = follow_up((batches, log), dt.date(2029, 5, 2), record_file, searched_on=dt.date(2029, 5, 2))
+    assert "p_two_sided" not in keys_anywhere(made) and made["effect_size"]["base_rate"]["n_trials"] == 40
+
+
+def test_a_hazard_ratio_is_awaited_only_until_its_six_months_are_up():
+    batch = batch_of([candidate("NCT1")], [base_rate(), FixedForecaster("stand_in", 0.7)])
+    readout = dt.date(2027, 3, 14)
+    held = as_of([batch], both_adjudicated("NCT1", "positive", readout=readout))
+    trial, result = held.batches[0].trials[0], held.results["NCT1"]
+    six_months_on = dt.date(2027, 9, 14)
+    assert analysis.scored_hazard_ratio(result, trial, six_months_on - dt.timedelta(days=1)) == (None, "awaited")
+    assert analysis.scored_hazard_ratio(result, trial, six_months_on) == (None, "missing")

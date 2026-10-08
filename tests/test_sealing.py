@@ -30,7 +30,7 @@ class StandIn:
 
 
 SERVICES = services()
-SCREENING = [ScreeningRecord(nct=nct, decision="eligible", screened_on=dt.date(2026, 10, 30), evidence="searched")
+SCREENING = [ScreeningRecord(nct=nct, decision="eligible", screened_on=dt.date(2026, 10, 30), evidence="searched", confidence="high")
              for nct in ("NCT1", "NCT2")]
 
 
@@ -43,7 +43,7 @@ def a_batch(on=BATCH_1, probability=0.8):
 
 
 def sealed(**kwargs):
-    arguments = dict(batch=a_batch(), screening=SCREENING, registration=REGISTERED, plan=PLAN, previous=None,
+    arguments = dict(batch=a_batch(), screening=SCREENING, design_reviews=(), registration=REGISTERED, plan=PLAN, previous=None,
                      services=SERVICES, today=BATCH_1)
     return seal_batch(**{**arguments, **kwargs})
 
@@ -181,8 +181,9 @@ def test_sealing_refuses_without_a_registered_protocol():
 def test_sealing_refuses_a_trial_without_an_eligible_screening_record():
     with pytest.raises(IneligibleTrial, match="NCT2"):
         sealed(screening=SCREENING[:1])
-    read_out_since = SCREENING + [ScreeningRecord(nct="NCT1", decision="already_read_out",
-                                                  screened_on=BATCH_1, evidence="topline announced this morning")]
+    read_out_since = SCREENING + [ScreeningRecord(
+        nct="NCT1", decision="already_read_out", screened_on=BATCH_1, evidence="topline announced this morning",
+        confidence="high", readout_date=BATCH_1, evidence_links=("https://example.test/topline",))]
     with pytest.raises(IneligibleTrial, match="NCT1"):
         sealed(screening=read_out_since)
 
@@ -299,7 +300,7 @@ def test_a_seal_file_must_have_the_shape_of_a_seal_as_well_as_its_layout(tmp_pat
 def test_trial_identifiers_have_one_spelling():
     for misspelt in ("NCT1 ", "nct1", " NCT1", "", "1"):
         with pytest.raises(ValueError):
-            ScreeningRecord(nct=misspelt, decision="eligible", screened_on=BATCH_1, evidence="searched")
+            ScreeningRecord(nct=misspelt, decision="eligible", screened_on=BATCH_1, evidence="searched", confidence="high")
         with pytest.raises(ValueError):
             Forecast(nct=misspelt, forecaster="x", version="1", batch_date=BATCH_1, probability_positive=0.5,
                      hazard_ratio=0.8, hazard_ratio_low=0.6, hazard_ratio_high=1.0)
@@ -567,3 +568,23 @@ def test_a_seal_that_carries_another_plan_than_the_first_is_refused_when_read_ba
     write_sealed_batch(forged, tmp_path / "seals", tmp_path / "private")
     with pytest.raises(TamperedSeal, match="plan other than the first"):
         read_sealed_study(tmp_path / "seals", tmp_path / "private", SERVICES)
+
+
+def test_a_design_ruled_out_or_awaiting_a_ruling_cannot_be_sealed():
+    from trialforecast.screening import DesignReview
+
+    tagged = universe.flatten(study("NCT1", "Overall survival (non-inferiority)"))
+    plain = universe.flatten(study("NCT2", "Overall survival"))
+    forecasters = [BaseRateForecaster(BASE_RATES, HAZARD_RATIOS, version="2026-11"), StandIn()]
+
+    def ruled(nct, decision):
+        return DesignReview(nct, decision, "read the protocol", "Abhijoy Sarkar", dt.date(2026, 10, 30))
+
+    batch = build_batch(BATCH_1, [tagged, plain], SCREENING, forecasters, design_reviews=[ruled("NCT1", "include")])
+    sealed(batch=batch, design_reviews=[ruled("NCT1", "include")])
+    with pytest.raises(IneligibleTrial, match="NCT1.*exclusion review"):
+        sealed(batch=batch)                                               # the ruling is not there at the seal
+    with pytest.raises(IneligibleTrial, match="NCT1.*excluded"):
+        sealed(batch=batch, design_reviews=[ruled("NCT1", "include"), ruled("NCT1", "exclude")])
+    with pytest.raises(IneligibleTrial, match="NCT2.*excluded"):
+        sealed(batch=batch, design_reviews=[ruled("NCT1", "include"), ruled("NCT2", "exclude")])

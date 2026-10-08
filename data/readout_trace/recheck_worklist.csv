@@ -1,0 +1,82 @@
+nct,traced_in,sponsor_type,acronym,traced_as,traced_readout_date,why
+NCT01917552,trace_E1,non_industry,,unresolved,,first trace of low confidence
+NCT02062489,trace_E2,non_industry,,unresolved,,first trace of low confidence
+NCT02546102,trace_D4,industry,,unresolved,,first trace of low confidence
+NCT03002103,trace_D4,industry,,unresolved,,first trace of low confidence
+NCT03008148,trace_B,industry,,in_doubt,,first trace of low confidence; result in doubt
+NCT03391934,trace_D3,industry,,unresolved,,first trace of low confidence
+NCT03456063,trace_C1,industry,,negative,2026-01-29,claude-opus-5-5 gave the right result with a date well before the traced one
+NCT03520686,trace_C1,industry,,in_doubt,2026-01-13,result in doubt
+NCT03602859,trace_A,industry,FIRST,positive,2024-12-20,claude-opus-5-5 gave the right result with a date well before the traced one
+NCT03682068,trace_B,industry,NILE,in_doubt,2026-07-27,result in doubt
+NCT03912415,trace_D2,industry,FERMATA,unresolved,,first trace of low confidence
+NCT03997123,trace_B,industry,CAPItello-290,negative,2024-06-18,claude-opus-5-5 gave the right result with a date well before the traced one
+NCT04182204,trace_B,industry,POLARGO,positive,2025-06-14,claude-opus-5-5 gave the right result with a date well before the traced one
+NCT04233151,trace_D1,industry,,unresolved,,first trace of low confidence
+NCT04338191,trace_E1,non_industry,FANTASTIC,unresolved,,first trace of low confidence
+NCT04338399,trace_C1,industry,BURAN,negative,2025-05-30,claude-opus-5-5 gave the right result with a date well before the traced one
+NCT04448522,trace_E2,non_industry,,unresolved,,first trace of low confidence
+NCT04475939,trace_A,industry,ZEAL-1L,negative,2025-04-30,claude-opus-5-5 gave the right result with a date well before the traced one
+NCT04578613,trace_D1,industry,,positive,2026-03-25,first trace of low confidence
+NCT04704934,trace_A,industry,,positive,2025-03-03,gpt-6.1-sol gave the right result with a date well before the traced one
+NCT04712097,trace_B,industry,Celestimo,positive,2026-09-17,claude-opus-5-5 gave the right result with a date well before the traced one
+NCT04716114,trace_B,industry,ALIVE,in_doubt,,first trace of low confidence; result in doubt
+NCT04720716,trace_C1,industry,,in_doubt,2026-05-27,first trace of low confidence; result in doubt
+NCT04765059,trace_D3,industry,COMPEL,in_doubt,2025-09-06,result in doubt
+NCT04834024,trace_D6,industry,,unresolved,,first trace of low confidence
+NCT04861558,trace_E1,non_industry,EFFIPEC,unresolved,,first trace of low confidence
+NCT04880746,trace_E2,non_industry,,unresolved,,first trace of low confidence
+NCT04884360,trace_D5,industry,MONO-OLA1,unresolved,,first trace of low confidence
+NCT04914598,trace_D6,industry,,in_doubt,2026-07-16,first trace of low confidence; result in doubt
+NCT05008783,trace_A,industry,,positive,2023-11-07,claude-opus-5-5 gave the right result with a date well before the traced one
+NCT05015621,trace_D2,industry,,unresolved,,first trace of low confidence
+NCT05044117,trace_E2,non_industry,,unresolved,,first trace of low confidence
+NCT05118776,trace_A,industry,,in_doubt,2025-08-15,result in doubt
+NCT05132413,trace_D2,industry,,unresolved,,first trace of low confidence
+NCT05189067,trace_E2,non_industry,,unresolved,,first trace of low confidence
+NCT05194878,trace_E1,non_industry,,unresolved,,first trace of low confidence
+NCT05204628,trace_B,industry,,positive,2025-09-17,first trace of low confidence; claude-opus-5-5 gave the right result with a date well before the traced one
+NCT05236972,trace_E2,non_industry,,unresolved,,first trace of low confidence
+NCT05244642,trace_D2,industry,,unresolved,,first trace of low confidence
+NCT05254171,trace_D3,industry,ASPIRE,unresolved,,first trace of low confidence
+NCT05264896,trace_E2,non_industry,,unresolved,,first trace of low confidence
+NCT05268692,trace_E2,non_industry,,unresolved,,first trace of low confidence
+NCT05313282,trace_E2,non_industry,TRIPLET-III,unresolved,,first trace of low confidence
+NCT05427669,trace_E2,non_industry,AFFORD,unresolved,,first trace of low confidence
+NCT05430399,trace_E2,non_industry,,unresolved,,first trace of low confidence
+NCT05450692,trace_C2,industry,LATIFY,negative,2025-12-22,claude-opus-5-5 gave the right result with a date well before the traced one
+NCT05518318,trace_D4,industry,,unresolved,,first trace of low confidence
+NCT05527470,trace_E1,non_industry,,unresolved,,first trace of low confidence
+NCT05566041,trace_B,industry,REPLATINUM,unresolved,,first trace of low confidence
+NCT05576272,trace_D3,industry,,unresolved,,first trace of low confidence
+NCT05594927,trace_D4,industry,BESTPOP,unresolved,,first trace of low confidence
+NCT05668988,trace_A,industry,,positive,2026-03-21,claude-opus-5-5 gave the right result with a date well before the traced one
+NCT05674539,trace_E2,non_industry,,unresolved,,first trace of low confidence
+NCT05701436,trace_E2,non_industry,,unresolved,,first trace of low confidence
+NCT05751850,trace_D5,industry,,unresolved,,first trace of low confidence
+NCT05755048,trace_B,industry,,in_doubt,,first trace of low confidence; result in doubt
+NCT05766605,trace_E1,non_industry,,unresolved,,first trace of low confidence
+NCT05767892,trace_D4,industry,,unresolved,,first trace of low confidence
+NCT05797831,trace_D6,industry,,unresolved,,first trace of low confidence
+NCT05868707,trace_D4,industry,,unresolved,,first trace of low confidence
+NCT05901935,trace_B,industry,,unresolved,,first trace of low confidence
+NCT05919030,trace_E1,non_industry,,unresolved,,first trace of low confidence
+NCT05994339,trace_E2,non_industry,,unresolved,,first trace of low confidence
+NCT06082635,trace_D4,industry,,unresolved,,first trace of low confidence
+NCT06089382,trace_E1,non_industry,,unresolved,,first trace of low confidence
+NCT06095167,trace_E2,non_industry,,unresolved,,first trace of low confidence
+NCT06097416,trace_E1,non_industry,,unresolved,,first trace of low confidence
+NCT06110663,trace_D6,industry,,unresolved,,first trace of low confidence
+NCT06182592,trace_D6,industry,,unresolved,,first trace of low confidence
+NCT06241755,trace_D6,industry,,unresolved,,first trace of low confidence
+NCT06313983,trace_D3,industry,,unresolved,,first trace of low confidence
+NCT06394492,trace_D1,industry,,unresolved,,first trace of low confidence
+NCT06430437,trace_D2,industry,,unresolved,,first trace of low confidence
+NCT06441565,trace_E1,non_industry,,unresolved,,first trace of low confidence
+NCT06469879,trace_B,industry,,unresolved,,first trace of low confidence
+NCT06485466,trace_E1,non_industry,,unresolved,,first trace of low confidence
+NCT06548347,trace_D3,industry,,unresolved,,first trace of low confidence
+NCT06664983,trace_E2,non_industry,,unresolved,,first trace of low confidence
+NCT06759857,trace_D4,industry,FHND9041,unresolved,,first trace of low confidence
+NCT06980272,trace_D2,industry,,unresolved,,first trace of low confidence
+NCT06998108,trace_D3,industry,,unresolved,,first trace of low confidence

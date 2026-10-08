@@ -30,7 +30,7 @@ from trialforecast.anchors import METHODS, AnchorCheck, AnchorFailed, TimestampS
 from trialforecast.batch import Batch, BatchTrial
 from trialforecast.forecasting import FORECASTER_NAME, Forecast
 from trialforecast.records import require_plain_date
-from trialforecast.screening import ScreeningRecord, require_eligible
+from trialforecast.screening import DesignReview, ScreeningRecord, require_eligible
 
 SEAL_FILE = "seal.json"
 ANCHOR_FILES = {"rfc3161": "seal.json.tsr", "opentimestamps": "seal.json.ots"}  # what the standard tools expect
@@ -198,6 +198,7 @@ def verify_seal(seal: Seal, anchors: dict[str, bytes], services: Iterable[Timest
 def seal_batch(
     batch: Batch,
     screening: Iterable[ScreeningRecord],
+    design_reviews: Iterable[DesignReview],
     registration: Registration | None,
     plan: Plan,
     previous: Seal | None,
@@ -206,7 +207,7 @@ def seal_batch(
 ) -> SealedBatch:
     """Seal a batch on its own date, under the registered plan, following the seal before it.
 
-    Refuses without a registered protocol, an eligible screening for every trial,
+    Refuses without a registered protocol, a trial not cleared by screening or ruled out for its design,
     or one anchor from each kind of time-stamping service signed that day. Refuses
     a plan other than the previous seal's, and a batch not dated after it.
     """
@@ -224,7 +225,7 @@ def seal_batch(
     for name in (plan.reference, *plan.effect_size_baselines):
         if any(forecast.no_forecast for forecast in batch.forecasts.get(name, ())):
             raise ValueError(f"{name} gave no forecast for a trial, so it cannot be the reference or a baseline")
-    require_eligible(batch.batch_date, [t.nct for t in batch.trials], screening)
+    require_eligible(batch.batch_date, [(t.nct, t.exclusion_review) for t in batch.trials], screening, design_reviews)
     services = list(services)
     if sorted(s.method for s in services) != sorted(METHODS):
         raise SealNotAnchored(f"sealing needs exactly one service of each kind: {', '.join(METHODS)}")

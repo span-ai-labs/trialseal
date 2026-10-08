@@ -338,11 +338,13 @@ def _saw_forecasts_first(opened: dict, nct: str, who: Iterable[str], recorded_on
 
 def _replay(
     log: AdjudicationLog, analysis_date: dt.date
-) -> tuple[dict[tuple[str, str, str], _Source], set[tuple[str, str, str]]]:
+) -> tuple[dict[tuple[str, str, str], _Source], set[tuple[str, str, str]], set[tuple[str, str, str]]]:
     """Replay entries recorded by the analysis date, in order of recording.
 
-    Returns each source's final state and the sources where a reading or reconciliation
-    still in force was made by someone who had already opened that trial's forecasts.
+    Returns each source's final state; the sources where a reading or reconciliation
+    still in force was made by someone who had already opened that trial's forecasts;
+    and, among those, the sources that were disclosed only after every such person
+    had opened them. Those last are later sources read after a reveal (ADR-0015).
     """
     # On one day: readings, then withdrawals, then reconciliations. Position in the log breaks remaining ties.
     entries = sorted(
@@ -377,41 +379,71 @@ def _replay(
     # Judged on what is still in force, so a reading that was not blind can be withdrawn and replaced.
     opened = _first_opened(log)
     not_blind: set[tuple[str, str, str]] = set()
+    after_reveal: set[tuple[str, str, str]] = set()
     for key, source in sources.items():
         in_force = [(a.adjudicator, a.recorded_on) for a in source.readings.values()]
+        disclosed = [a.disclosed_on for a in source.readings.values()]
         if source.reconciliation is not None:
             in_force += [(name, source.reconciliation.recorded_on) for name in source.reconciliation.adjudicators]
-        if any(_saw_forecasts_first(opened, key[0], [name], recorded_on) for name, recorded_on in in_force):
+            disclosed.append(source.reconciliation.disclosed_on)
+        saw_first = [name for name, recorded_on in in_force if _saw_forecasts_first(opened, key[0], [name], recorded_on)]
+        if saw_first:
             not_blind.add(key)
-    return sources, not_blind
+            if all(opened[(key[0], name)] < min(disclosed) for name in saw_first):
+                after_reveal.add(key)
+    return sources, not_blind, after_reveal
+
+
+class _Standing(NamedTuple):
+    """Where adjudication stands: each settled trial's readings, why others have no result yet, and what was set aside."""
+
+    readings: dict[str, list[SourceReading]]
+    held_back: dict[str, str]
+    set_aside: dict[str, list[str]]
 
 
 def _standing_readings(
-    log: AdjudicationLog, analysis_date: dt.date, disclosed_by: dt.date | None = None
-) -> tuple[dict[str, list[SourceReading]], dict[str, str]]:
+    log: AdjudicationLog, analysis_date: dt.date, disclosed_by: dt.date | None = None, count_set_aside: bool = False
+) -> _Standing:
     """Per trial: its standing source readings, or the most serious reason it has no result yet.
 
     A source that every entry dates after `disclosed_by` is outside the analysis, settled or not.
+
+    A source read by someone who had already opened the trial's forecasts decides
+    nothing (ADR-0015). If it was disclosed only after they opened them, it is a
+    later source read after the reveal: it is set aside, and the trial's blind
+    readings stand; if the trial has none, it has no result. If the source was
+    already public when the forecasts were opened, reading it late is simply not
+    blind, and the trial is held back until a blind reading replaces it. With
+    `count_set_aside`, settled later sources are counted like any other, as one
+    sensitivity analysis does.
     """
-    sources, not_blind = _replay(log, analysis_date)
+    sources, not_blind, after_reveal = _replay(log, analysis_date)
     standing: dict[str, list[SourceReading]] = {}
     held_back: dict[str, str] = {}
+    aside: dict[str, list[str]] = {}
 
     def hold_back(nct: str, reason: str) -> None:
         order = (NOT_BLIND, DISAGREEMENT, ONE_READING)
         if nct not in held_back or order.index(reason) < order.index(held_back[nct]):
             held_back[nct] = reason
 
-    for (nct, source_type, source_ref), source in sources.items():
+    for key, source in sources.items():
+        nct, source_type, source_ref = key
         any_reading = next(iter(source.readings.values()))
         dated = [a.disclosed_on for a in source.readings.values()]
         if source.reconciliation is not None:
             dated = [source.reconciliation.disclosed_on]
         if disclosed_by is not None and min(dated) > disclosed_by:
             continue
-        if (nct, source_type, source_ref) in not_blind:
-            hold_back(nct, NOT_BLIND)
-            continue
+        unsettled = source.reconciliation is None and (source.disputed or len(source.readings) < 2)
+        if key in not_blind:
+            if key not in after_reveal:
+                hold_back(nct, NOT_BLIND)
+                continue
+            if not count_set_aside or unsettled:
+                aside.setdefault(nct, []).append(source_ref)
+                continue
         if source.reconciliation is not None:
             settled = source.reconciliation
             reading = SourceReading(source_type, source_ref, settled.disclosed_on, settled.outcome,
@@ -426,15 +458,26 @@ def _standing_readings(
             reading = SourceReading(source_type, source_ref, any_reading.disclosed_on, any_reading.outcome,
                                     any_reading.hazard_ratio, any_reading.hazard_ratio_endpoint, any_reading.language)
         standing.setdefault(nct, []).append(reading)
-    return {nct: readings for nct, readings in standing.items() if nct not in held_back}, held_back
+    for nct in aside:
+        if nct not in standing:
+            hold_back(nct, NOT_BLIND)
+    settled_trials = {nct: readings for nct, readings in standing.items() if nct not in held_back}
+    return _Standing(settled_trials, held_back, {nct: sorted(refs) for nct, refs in aside.items() if nct in settled_trials})
+
+
+def set_aside(log: AdjudicationLog, analysis_date: dt.date, disclosed_by: dt.date | None = None) -> dict[str, list[str]]:
+    """Trials with a result whose later sources were read after the forecasts were opened, and those sources."""
+    return _standing_readings(log, analysis_date, disclosed_by).set_aside
 
 
 def awaiting_result(log: AdjudicationLog, analysis_date: dt.date, disclosed_by: dt.date | None = None) -> dict[str, str]:
     """Trials with adjudications but no result yet, and the most serious reason for each."""
-    return _standing_readings(log, analysis_date, disclosed_by)[1]
+    return _standing_readings(log, analysis_date, disclosed_by).held_back
 
 
-def results(log: AdjudicationLog, analysis_date: dt.date, disclosed_by: dt.date | None = None) -> dict[str, TrialResult]:
+def results(
+    log: AdjudicationLog, analysis_date: dt.date, disclosed_by: dt.date | None = None, count_set_aside: bool = False
+) -> dict[str, TrialResult]:
     """Each trial's result, from what had been adjudicated by the analysis date.
 
     The most authoritative standing source decides the outcome (the later of two
@@ -443,11 +486,12 @@ def results(log: AdjudicationLog, analysis_date: dt.date, disclosed_by: dt.date 
 
     An analysis fixed for a date passes it as `disclosed_by`: only sources
     disclosed by then count, and a hazard ratio is awaited or missing as of then,
-    however long after that date the adjudication was finished.
+    however long after that date the adjudication was finished. Sources read
+    after the forecasts were opened count only with `count_set_aside`.
     """
     as_of = analysis_date if disclosed_by is None else min(analysis_date, disclosed_by)
     found = {}
-    for nct, readings in _standing_readings(log, analysis_date, disclosed_by)[0].items():
+    for nct, readings in _standing_readings(log, analysis_date, disclosed_by, count_set_aside).readings.items():
         history = tuple(sorted(readings, key=lambda r: (r.disclosed_on, r.rank, r.source)))
         decided_by = min(history, key=lambda r: (r.rank, -r.disclosed_on.toordinal(), r.source))
         if decided_by.outcome == "void":
@@ -471,18 +515,69 @@ def results(log: AdjudicationLog, analysis_date: dt.date, disclosed_by: dt.date 
 def record_adjudication(
     log_file: pathlib.Path, adjudication: Adjudication, forecast_access: Iterable[ForecastAccess]
 ) -> None:
-    """Append an adjudication to its log, unless its author has already opened the trial's forecasts."""
+    """Append an adjudication to its log, unless it is a late reading of a source its author could have read blind.
+
+    Someone who has opened a trial's forecasts may still read a source disclosed
+    after they opened them: that reading is set aside in every registered analysis
+    (ADR-0015). A source that was already public when they opened the forecasts
+    is refused, since nothing but a blind reading of it will ever count.
+    """
     opened = _first_opened(AdjudicationLog(forecast_access=tuple(forecast_access)))
-    if _saw_forecasts_first(opened, adjudication.nct, [adjudication.adjudicator], adjudication.recorded_on):
+    first_seen = opened.get((adjudication.nct, adjudication.adjudicator))
+    if first_seen is not None and first_seen <= adjudication.recorded_on and adjudication.disclosed_on <= first_seen:
         raise NotBlind(f"{adjudication.adjudicator} opened the forecasts for {adjudication.nct} before adjudicating it")
     records.append(log_file, adjudication)
+
+
+def record_forecast_access(log_file: pathlib.Path, access: ForecastAccess, today: dt.date) -> None:
+    """Record that someone opened a trial's forecasts, on the day they did. An entry dated any other day is refused,
+    because a back-dated one could be used to set aside a reading that was made blind."""
+    if access.opened_on != today:
+        raise ValueError(f"{access.nct}: forecasts are recorded as opened today, {today}, not on {access.opened_on}")
+    records.append(log_file, access)
 
 
 def record_reconciliation(log_file: pathlib.Path, reconciliation: Reconciliation, log: AdjudicationLog) -> None:
     """Append a reconciliation to its log, if it settles a recorded disagreement and its adjudicators are still blind."""
     with_it = AdjudicationLog(log.adjudications, (*log.reconciliations, reconciliation), log.withdrawals,
                               log.forecast_access)
-    _, not_blind = _replay(with_it, reconciliation.recorded_on)
+    _, not_blind, _ = _replay(with_it, reconciliation.recorded_on)
     if (reconciliation.nct, reconciliation.source_type, reconciliation.source) in not_blind:
         raise NotBlind(f"{reconciliation.nct}: reconciled after an adjudicator opened its forecasts")
     records.append(log_file, reconciliation)
+
+
+def adjudicator_agreement(log: AdjudicationLog) -> dict:
+    """How often the two adjudicators' first readings of a source agreed.
+
+    First readings are compared, before any correction or reconciliation, since
+    those are what two people reached independently. Cohen's kappa is given for
+    the outcome, and is undefined when both called every source the same way.
+    Hazard ratios are compared wherever either recorded one, and agree when they
+    name the same endpoint and match to two decimal places. A source read by one
+    person, or by more than two, is counted and not compared.
+    """
+    first: dict[tuple, dict[str, object]] = {}
+    for reading in sorted(log.adjudications, key=lambda a: a.recorded_on):  # a stable sort: log order breaks ties
+        first.setdefault((reading.nct, reading.source_type, reading.source), {}).setdefault(reading.adjudicator, reading)
+    pairs = [tuple(by_adjudicator[name] for name in sorted(by_adjudicator))
+             for by_adjudicator in first.values() if len(by_adjudicator) == 2]
+    agreed = sum(a.outcome == b.outcome for a, b in pairs)
+    with_ratio = [(a, b) for a, b in pairs if a.hazard_ratio is not None or b.hazard_ratio is not None]
+
+    def same_ratio(a, b) -> bool:
+        if a.hazard_ratio is None or b.hazard_ratio is None:
+            return False
+        same_endpoint = " ".join(a.hazard_ratio_endpoint.casefold().split()) == " ".join(b.hazard_ratio_endpoint.casefold().split())
+        return same_endpoint and round(a.hazard_ratio, 2) == round(b.hazard_ratio, 2)
+
+    kappa = None
+    if pairs:
+        observed = agreed / len(pairs)
+        outcomes = {reading.outcome for pair in pairs for reading in pair}
+        by_chance = sum(sum(a.outcome == o for a, _ in pairs) * sum(b.outcome == o for _, b in pairs)
+                        for o in outcomes) / len(pairs) ** 2
+        kappa = None if by_chance == 1 else (observed - by_chance) / (1 - by_chance)
+    return {"sources": len(pairs), "not_read_by_two": len(first) - len(pairs), "outcome_agreed": agreed, "kappa": kappa,
+            "disclosure_date_agreed": sum(a.disclosed_on == b.disclosed_on for a, b in pairs),
+            "hazard_ratio_compared": len(with_ratio), "hazard_ratio_agreed": sum(same_ratio(a, b) for a, b in with_ratio)}
