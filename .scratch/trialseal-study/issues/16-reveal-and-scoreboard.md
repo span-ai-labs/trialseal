@@ -18,3 +18,5 @@
 ## Comments
 
 **2026-10-08, from ticket 05.** Adjudication blindness depends on a record of who opened which trial's forecasts and when. Reveal, and any other tool that shows a forecast to a person, must write that record before showing it.
+
+**2026-10-08, from ticket 06.** A reveal is a file of openings for one trial, one line each, taken from the private openings of the batch. `trialseal-verify` already checks such a file against a published seal. This ticket adds the step that produces and publishes it, gated on legal sign-off and on an agreed adjudication.

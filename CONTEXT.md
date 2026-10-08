@@ -108,6 +108,22 @@ _Avoid_: Round, run, submission
 Fixing a batch so that its existence on that date can be proven later, without disclosing the forecasts.
 _Avoid_: Committing, locking, publishing
 
+**Commitment**:
+A fingerprint of one forecast mixed with a secret value, published at sealing. It lets the forecast be shown later to be the one made that day, without disclosing it or any other.
+_Avoid_: Hash, signature, checksum
+
+**Seal**:
+What is published when a batch is sealed: its trials, one commitment per forecast, and the anchors for the whole.
+_Avoid_: Manifest, snapshot, receipt
+
+**Anchor**:
+Proof from an outside time-stamping service that a seal existed on a date. Every seal has two, from independent kinds of service.
+_Avoid_: Timestamp, notarisation, stamp
+
+**Opening**:
+What is disclosed at reveal for one forecast: the forecast and the secret value behind its commitment.
+_Avoid_: Proof, disclosure, key
+
 **Reveal**:
 Disclosing a trial's sealed forecasts after its readout.
 _Avoid_: Unsealing, release

@@ -7,3 +7,7 @@ snapshots/snapshot.log
 snapshots/*/studies.jsonl.gz
 # Derived from a snapshot by trialforecast-universe; regenerate instead of tracking.
 data/universe/
+# Forecasts and their salts stay private until each trial is revealed (ADR-0001).
+private/
+# Model keys, written by scripts/setup_wizard.sh.
+.env

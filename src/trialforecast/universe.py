@@ -49,6 +49,8 @@ PROGRESSION = re.compile(
     re.I,
 )
 QUALIFIED_SURVIVAL = re.compile(r"free|specific", re.I)
+ENDPOINT_TYPES = ("overall_survival", "progression", "other_time_to_event")
+SPONSOR_TYPES = ("industry", "non_industry")
 TITLE_TRIAL_NAME = re.compile(r"\(([A-Za-z][\w .\-/]{2,40})\)\s*$")
 
 

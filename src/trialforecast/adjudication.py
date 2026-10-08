@@ -17,7 +17,7 @@ from typing import Iterable, NamedTuple
 
 from trialforecast import records
 from trialforecast.dates import add_months
-from trialforecast.records import require_plain_date
+from trialforecast.records import require_plain_date, require_trial_id
 
 OUTCOMES = ("positive", "negative", "void")
 WITH_READOUT = ("positive", "negative")  # a void trial has no readout
@@ -104,6 +104,7 @@ class Adjudication:
     hazard_ratio_endpoint: str | None = None
 
     def __post_init__(self) -> None:
+        require_trial_id(self.nct)
         object.__setattr__(self, "adjudicator", normalised_name(self.adjudicator))
         object.__setattr__(self, "language", self.language.strip().casefold())
         object.__setattr__(self, "endpoint_results", tuple(self.endpoint_results))
@@ -164,6 +165,7 @@ class Reconciliation:
     recorded_on: dt.date
 
     def __post_init__(self) -> None:
+        require_trial_id(self.nct)
         object.__setattr__(self, "adjudicators", tuple(sorted({normalised_name(a) for a in self.adjudicators} - {""})))
         if self.hazard_ratio is not None:
             object.__setattr__(self, "hazard_ratio", float(self.hazard_ratio))
@@ -188,6 +190,7 @@ class Withdrawal:
     recorded_on: dt.date
 
     def __post_init__(self) -> None:
+        require_trial_id(self.nct)
         object.__setattr__(self, "adjudicator", normalised_name(self.adjudicator))
         if not self.reason.strip():
             raise ValueError(f"{self.nct}: a withdrawal needs its reason")
@@ -203,6 +206,7 @@ class ForecastAccess:
     opened_on: dt.date
 
     def __post_init__(self) -> None:
+        require_trial_id(self.nct)
         object.__setattr__(self, "person", normalised_name(self.person))
         require_plain_date(self.opened_on, f"{self.nct}: date the forecasts were opened")
 

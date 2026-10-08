@@ -5,9 +5,19 @@ import dataclasses
 import datetime as dt
 import json
 import pathlib
+import re
 from typing import TypeVar, get_args, get_type_hints
 
 Record = TypeVar("Record")
+
+
+_TRIAL_ID = re.compile(r"NCT\d+")
+
+
+def require_trial_id(nct: object) -> None:
+    """A trial is named by its registry number in one spelling, so "nct1" or "NCT1 " cannot pass for another trial."""
+    if not isinstance(nct, str) or not _TRIAL_ID.fullmatch(nct):
+        raise ValueError(f"{nct!r} is not a registry number such as NCT01234567")
 
 
 def require_plain_date(value: object, label: str) -> None:

@@ -12,3 +12,7 @@
 - [ ] The batch is sealed on the registered date and its cost recorded
 - [ ] A missed or late batch is recorded in the deviations log
 - [ ] A short monthly report lists what changed
+
+## Comments
+
+**2026-10-08, from ticket 06.** Each month's routine should upgrade the previous batch's OpenTimestamps anchor and publish the completed file, and back up the private openings.

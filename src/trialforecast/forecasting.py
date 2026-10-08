@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
 
-from trialforecast.records import require_plain_date
+from trialforecast.records import require_plain_date, require_trial_id
 
 Candidate = Mapping[str, Any]
 
@@ -31,6 +31,7 @@ class Forecast:
     hazard_ratio_high: float
 
     def __post_init__(self) -> None:
+        require_trial_id(self.nct)
         if not FORECASTER_NAME.fullmatch(self.forecaster):
             raise ValueError(f"forecaster name {self.forecaster!r} must be lower-case letters, digits and underscores")
         require_plain_date(self.batch_date, f"{self.nct}: batch date")

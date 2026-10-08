@@ -10,17 +10,14 @@ from typing import Iterable
 
 from trialforecast import records
 from trialforecast.forecasting import Candidate, Forecast, Forecaster
-from trialforecast.screening import ScreeningRecord, eligible_on
+from trialforecast.screening import ScreeningRecord, require_eligible
+from trialforecast.universe import ENDPOINT_TYPES, SPONSOR_TYPES
 
 TRIALS_FILE = "_trials.jsonl"  # cannot collide with a forecaster's file: names never start with an underscore
 
 
-class IneligibleTrial(Exception):
-    """A batch was asked to include a trial that screening has not cleared."""
-
-
 class InvalidForecast(Exception):
-    """A forecaster returned something other than its own forecast for the trial and batch asked."""
+    """A batch holds something other than one forecast per forecaster for each of its trials."""
 
 
 class TamperedBatch(Exception):
@@ -36,12 +33,29 @@ class BatchTrial:
     sponsor_type: str | None
     endpoint_type: str
 
+    def __post_init__(self) -> None:
+        records.require_trial_id(self.nct)
+        if not isinstance(self.scored_endpoint, str) or not self.scored_endpoint.strip():
+            raise ValueError(f"{self.nct}: a trial in a batch must name its scored endpoint")
+        if self.endpoint_type not in ENDPOINT_TYPES or self.sponsor_type not in (*SPONSOR_TYPES, None):
+            raise ValueError(f"{self.nct}: unknown endpoint type or sponsor type")
+
 
 @dataclass(frozen=True)
 class Batch:
     batch_date: dt.date
     trials: tuple[BatchTrial, ...]
     forecasts: dict[str, tuple[Forecast, ...]]  # by forecaster name, each ordered by trial
+
+    def __post_init__(self) -> None:
+        listed = [t.nct for t in self.trials]
+        if len(set(listed)) != len(listed):
+            raise InvalidForecast(f"batch {self.batch_date} lists a trial more than once")
+        for name, forecasts in self.forecasts.items():
+            if sorted(f.nct for f in forecasts) != sorted(listed):
+                raise InvalidForecast(f"{name} does not hold exactly one forecast for each trial in batch {self.batch_date}")
+            if any((f.forecaster, f.batch_date) != (name, self.batch_date) for f in forecasts):
+                raise InvalidForecast(f"{name} holds a forecast made under another name or for another batch")
 
     @property
     def fingerprint(self) -> str:
@@ -87,10 +101,7 @@ def build_batch(
     if repeated:
         raise ValueError(f"forecaster names must be unique; repeated: {', '.join(repeated)}")
 
-    cleared = eligible_on(batch_date, screening)
-    refused = [c["nct"] for c in trials if c["nct"] not in cleared]
-    if refused:
-        raise IneligibleTrial(f"not screened as eligible for {batch_date}: {', '.join(refused)}")
+    require_eligible(batch_date, [c["nct"] for c in trials], screening)
 
     forecasts: dict[str, tuple[Forecast, ...]] = {}
     for forecaster in forecasters:

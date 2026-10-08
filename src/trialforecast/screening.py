@@ -6,12 +6,16 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from trialforecast.forecasting import Candidate
-from trialforecast.records import require_plain_date
+from trialforecast.records import require_plain_date, require_trial_id
 
 DECISIONS = ("eligible", "already_read_out")
 
 # A screening older than this may have been overtaken by a readout.
 SCREENING_VALID_DAYS = 14
+
+
+class IneligibleTrial(Exception):
+    """A trial that screening has not cleared was about to enter a batch or a seal."""
 
 
 @dataclass(frozen=True)
@@ -22,6 +26,7 @@ class ScreeningRecord:
     evidence: str
 
     def __post_init__(self) -> None:
+        require_trial_id(self.nct)
         if self.decision not in DECISIONS:
             raise ValueError(f"{self.nct}: screening decision must be one of {DECISIONS}, not {self.decision!r}")
         if not self.evidence.strip():
@@ -50,3 +55,11 @@ def eligible_trials(
     """The candidates that are eligible trials for a batch on this date. Unscreened candidates are not."""
     cleared = eligible_on(batch_date, log)
     return [c for c in candidates if c["nct"] in cleared]
+
+
+def require_eligible(batch_date: dt.date, trials: Iterable[str], log: Iterable[ScreeningRecord]) -> None:
+    """Refuse unless screening has cleared every one of these trials for this date."""
+    cleared = eligible_on(batch_date, log)
+    refused = [nct for nct in trials if nct not in cleared]
+    if refused:
+        raise IneligibleTrial(f"not screened as eligible for {batch_date}: {', '.join(refused)}")
