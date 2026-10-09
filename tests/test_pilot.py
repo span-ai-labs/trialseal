@@ -11,7 +11,7 @@ import pytest
 from registry_records import study
 from study_records import adjudicated, both_adjudicated, candidate
 from trialforecast import records
-from trialforecast.adjudication import AdjudicationLog, results
+from trialforecast.adjudication import NothingFound, AdjudicationLog, results
 from trialforecast.forecasting import Forecast
 from trialforecast.models import ModelSpec, ModelUnavailable, Reply
 from trialforecast.pilot import (
@@ -85,6 +85,9 @@ def test_an_adjudicated_result_takes_the_place_of_the_traced_one():
         PastTrial("NCT2", dt.date(2026, 8, 3), True, 0.66, adjudicated=True),
         past("NCT4"),                                  # NCT3 was void: it never read out, so it is no longer here
     ]
+    # Both adjudicators searched for NCT2 and found nothing: it is a trial with no readout found, whatever the trace said.
+    assert with_adjudicated(traced, {}, candidates, TODAY, no_result_found=["NCT2"])[1] == PastTrial(
+        "NCT2", None, None, None, adjudicated=True)
 
 
 # --- the two probes -----------------------------------------------------------------------
@@ -564,6 +567,14 @@ def test_adjudicated_results_reshape_the_pilot_not_only_its_outcomes(pilot_dir):
     worklist = (pilot_dir / "results" / "pilot" / "adjudication_worklist.csv").read_text()
     assert "NCT0014" not in worklist and "NCT0016" not in worklist
     assert "NCT0015,,A Study of X Versus Y,Overall survival,example-1,yes" in worklist
+    # For another pilot trial both adjudicators searched and found nothing: it has no readout found, so it is one no more.
+    another = next(line.split(",")[0] for line in worklist.splitlines()[1:] if not line.startswith("NCT0015"))
+    for who in ("first", "second"):
+        records.append(pilot_dir / "adjudication" / "pilot" / "nothing_found.jsonl",
+                       NothingFound(nct=another, adjudicator=who, searched="registry, PubMed", recorded_on=TODAY))
+    assert run("report", pilot_dir, model) == 0
+    assert "leaving 4 pilot trials" in (pilot_dir / "results" / "pilot" / "report.md").read_text()
+    assert another not in (pilot_dir / "results" / "pilot" / "adjudication_worklist.csv").read_text()
 
 
 def test_one_model_of_the_roster_can_be_worked_with_alone(tmp_path, capsys):

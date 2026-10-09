@@ -30,14 +30,18 @@ import numpy as np
 from scipy.stats import chi2, norm
 
 from trialforecast import records, scoring, traces
-from trialforecast.adjudication import TrialResult, adjudicator_agreement, read_log, results
+from trialforecast.adjudication import (
+    TrialResult, adjudicator_agreement, no_result_found, read_log, read_nothing_found, results,
+)
 from trialforecast.analysis import log_hazard_ratio, scored_hazard_ratio
 from trialforecast.forecasting import BaseRateForecaster, Candidate, Forecast
 from trialforecast.models import (
     OUTAGE, Ask, ModelForecaster, ModelSpec, ModelUnavailable, ask_provider, ask_through_outages, last_json_object,
     load_keys, read_models, trial_information, writable,
 )
-from trialforecast.studyfiles import latest_snapshot, read_records, registry_records, sealed_as, write_table
+from trialforecast.studyfiles import (
+    PILOT_ADJUDICATION, PILOT_WORKLIST, latest_snapshot, read_records, registry_records, sealed_as, write_table,
+)
 from trialforecast.wording import counted
 
 NOT_THE_EVIDENCE = (
@@ -73,7 +77,6 @@ POWER, ALPHA = 0.8, 0.05
 # Replies and forecasts stay out of the public record: some probed trials have no readout yet, and the
 # adjudicators have still to read the pilot trials.
 PRIVATE = pathlib.Path("private") / "pilot"
-PILOT_ADJUDICATION = pathlib.Path("adjudication") / "pilot"
 PILOT_TRACES = pathlib.Path("study") / "pilot_traces.json"
 
 
@@ -114,19 +117,23 @@ def traced_trials(trace_files: Iterable[pathlib.Path]) -> list[PastTrial]:
 
 
 def with_adjudicated(
-    trials: Iterable[PastTrial], adjudicated: Mapping[str, TrialResult], candidates: Mapping[str, Candidate], as_of: dt.date
+    trials: Iterable[PastTrial], adjudicated: Mapping[str, TrialResult], candidates: Mapping[str, Candidate], as_of: dt.date,
+    no_result_found: Iterable[str] = (),
 ) -> list[PastTrial]:
     """Past trials with each traced result replaced by the adjudicated one, wherever there is one.
 
     The adjudicated readout date and outcome stand in for the traced ones, and the
     hazard ratio is taken only if recorded for the scored endpoint. A trial
     adjudicated as void had no readout, so it is no longer a past readout at all.
+    One for which both adjudicators searched and found nothing is a trial with no
+    readout found, whatever the trace said.
     """
+    nothing_found = set(no_result_found)
     merged = []
     for trial in trials:
         result = adjudicated.get(trial.nct)
         if result is None:
-            merged.append(trial)
+            merged.append(PastTrial(trial.nct, None, None, None, adjudicated=True) if trial.nct in nothing_found else trial)
         elif result.readout_date is not None:
             hazard_ratio, _ = scored_hazard_ratio(result, sealed_as(candidates[trial.nct]), as_of)
             merged.append(PastTrial(trial.nct, result.readout_date, result.outcome == "positive", hazard_ratio, adjudicated=True))
@@ -689,7 +696,8 @@ def _forecast(run: _Invocation) -> None:
 
 def _report(run: _Invocation) -> None:
     log = read_log(run.root / PILOT_ADJUDICATION)
-    trials = with_adjudicated(run.trials, results(log, run.today), run.candidates, run.today)
+    nothing_found = no_result_found(read_nothing_found(run.root / PILOT_ADJUDICATION), log, run.today)
+    trials = with_adjudicated(run.trials, results(log, run.today), run.candidates, run.today, nothing_found)
     pilots, recall_rows, to_adjudicate = [], [], {}
     for spec in run.specs:
         try:
@@ -708,14 +716,14 @@ def _report(run: _Invocation) -> None:
             to_adjudicate.setdefault(trial.nct, []).append(spec.model)
         recall_rows += [(spec.model, probe, *row.values()) for probe in PROBES
                         for row in recall_by_month([r for r in answers if r.probe == probe], trials, spec.training_cutoff)]
-    out = run.root / "results" / "pilot"
+    out = run.root / PILOT_WORKLIST.parent
     out.mkdir(parents=True, exist_ok=True)
     (out / "report.md").write_text(report(pilots, trials, adjudicator_agreement(log), run.today), encoding="utf-8")
     adjudicated = {t.nct for t in trials if t.adjudicated}
     tables = (
         ("recall.csv", ("model", "probe", "months_after_cutoff", "trials", "said_known", "right_result", "recalled"), recall_rows),
         # What the two adjudicators have to read: each model's pilot trials, with nothing about any forecast.
-        ("adjudication_worklist.csv", ("nct", "acronym", "title", "scored_endpoint", "pilot_trial_for", "adjudicated"),
+        (PILOT_WORKLIST.name, ("nct", "acronym", "title", "scored_endpoint", "pilot_trial_for", "adjudicated"),
          [(nct, run.candidates[nct].get("acronym"), run.candidates[nct].get("brief_title"), run.candidates[nct]["scored_endpoint"],
            "; ".join(models), "yes" if nct in adjudicated else "no") for nct, models in sorted(to_adjudicate.items())]),
     )

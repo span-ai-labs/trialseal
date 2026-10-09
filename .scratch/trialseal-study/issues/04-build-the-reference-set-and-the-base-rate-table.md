@@ -105,3 +105,4 @@
 
 **Known limit.** The tool that records an adjudicator's reading (ticket 05's rules behind a command or form) is not built: readings can be recorded only through `record_adjudication` in code. That is the next thing the adjudicators need.
 
+**2026-10-09, the adjudicators can now record.** `trialseal-adjudicate --set reference` is built (see ticket 05). A sampled trial for which both adjudicators search and find nothing is settled as such: it counts against the trace in the nine-in-ten check where the trace had a result, and as agreement where the trace had the trial ended without analysis. A trial in doubt is settled the same way when neither finds a source that states its result. Once `study/base_rates.json` exists the reference log takes no more entries.

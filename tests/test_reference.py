@@ -9,7 +9,7 @@ import pytest
 from registry_records import study
 from study_records import adjudicated, both_adjudicated, candidate
 from trialforecast import records, scoring
-from trialforecast.adjudication import AdjudicationLog, awaiting_result, results
+from trialforecast.adjudication import AdjudicationLog, NothingFound, awaiting_result, results
 from trialforecast.reference import (
     NotFrozen, adjudication_sample, base_rate_forecaster, base_rate_table, frozen_base_rates, hazard_ratio_table, main,
     reference_trials, trace_accuracy,
@@ -213,7 +213,10 @@ def test_trace_accuracy_is_how_often_one_readers_trace_matched_the_adjudicators(
         + both_adjudicated("NCT0002", "negative", readout=dt.date(2025, 3, 1))         # traced as positive
         + both_adjudicated("NCT0003", "positive", readout=dt.date(2024, 11, 1)))       # traced four months late
     assert trace_accuracy(trials, results(log, TODAY)) == {
-        "trials": 3, "outcome_matched": 2, "date_within_a_week": 2, "date_later_than_adjudicated": 1}
+        "trials": 3, "outcome_matched": 2, "no_result_found": 0, "date_within_a_week": 2, "date_later_than_adjudicated": 1}
+    # For NCT0004, traced as read out, both adjudicators searched and found nothing: the trace had that one wrong too.
+    assert trace_accuracy(trials, results(log, TODAY), no_result_found=["NCT0004"]) == {
+        "trials": 4, "outcome_matched": 2, "no_result_found": 1, "date_within_a_week": 2, "date_later_than_adjudicated": 1}
 
 
 # --- the command, through files -------------------------------------------------------------------
@@ -355,6 +358,82 @@ def test_a_sampled_trial_that_leaves_the_reference_set_need_not_be_adjudicated(s
     rechecks = study_dir / "data" / "readout_trace" / "rechecks.csv"
     rechecks.write_text(rechecks.read_text() + f"{sampled[0]},no,,,,,,high\n")
     assert run(study_dir, "freeze") == 0
+
+
+def both_found_nothing(study_dir, ncts):
+    for nct in ncts:
+        for who in ("first", "second"):
+            records.append(study_dir / "adjudication" / "reference" / "nothing_found.jsonl",
+                           NothingFound(nct=nct, adjudicator=who, searched="registry, PubMed, sponsor news", recorded_on=TODAY))
+
+
+def test_a_sampled_trial_both_adjudicators_found_nothing_for_is_settled_and_counts_against_the_trace(study_dir, capsys):
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    sampled = drawn_sample(study_dir)["trials"]
+    adjudicate(study_dir, sampled[1:])
+    both_found_nothing(study_dir, sampled[:1])
+    capsys.readouterr()
+    assert run(study_dir, "freeze") == 0
+    figures = json.loads((study_dir / "study" / "base_rates.json").read_text())
+    assert figures["trace_accuracy"] == {"trials": 40, "outcome_matched": 39, "no_result_found": 1, "date_within_a_week": 39,
+                                         "date_later_than_adjudicated": 0}
+    assert "adjudication/reference/nothing_found.jsonl" in figures["made_from"]
+    # The trial is no longer a clear result: the adjudicators' finding stands above the trace.
+    assert run(study_dir, "report") == 0
+    with (study_dir / "results" / "reference_set" / "trials.csv").open() as f:
+        placed = {row["nct"]: row for row in csv.DictReader(f)}
+    assert (placed[sampled[0]]["place"], placed[sampled[0]]["adjudicated"]) == ("unresolved", "True")
+
+
+def test_a_trial_in_doubt_is_settled_when_both_adjudicators_find_no_source_that_states_its_result(study_dir, capsys):
+    trace(study_dir / "data" / "readout_trace", ["NCT0030,yes,2025-03-01,mixed,OS,,,high"], name="rechecks.csv")
+    run(study_dir, "sample")
+    adjudicate(study_dir, drawn_sample(study_dir)["trials"])
+    capsys.readouterr()
+    assert run(study_dir, "freeze") == 1 and "1 trial are not yet counted" in capsys.readouterr().out
+    both_found_nothing(study_dir, ["NCT0030"])
+    assert run(study_dir, "freeze") == 0
+
+
+def test_a_trial_traced_as_ended_without_analysis_that_both_found_nothing_for_is_not_a_miss(study_dir, capsys):
+    traced = study_dir / "data" / "readout_trace" / "trace_A.csv"
+    traced.write_text(traced.read_text().replace("NCT0002,yes,2025-03-01,met,OS,0.7,2025-03-01,high",
+                                                 "NCT0002,no,,terminated_no_analysis,,,,high"))
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    adjudicate(study_dir, [nct for nct in drawn_sample(study_dir)["trials"] if nct != "NCT0002"])
+    # The trace says the trial ended with no result; the adjudicators searched and found no result. They agree.
+    both_found_nothing(study_dir, ["NCT0002"])
+    assert run(study_dir, "freeze") == 0
+    accuracy = json.loads((study_dir / "study" / "base_rates.json").read_text())["trace_accuracy"]
+    assert accuracy["outcome_matched"] == accuracy["trials"] and accuracy["no_result_found"] == 0
+    assert run(study_dir, "report") == 0
+    with (study_dir / "results" / "reference_set" / "trials.csv").open() as f:
+        placed = {row["nct"]: row for row in csv.DictReader(f)}
+    assert (placed["NCT0002"]["place"], placed["NCT0002"]["adjudicated"]) == ("void", "True")
+
+
+def test_the_report_says_how_many_sampled_trials_the_adjudicators_found_nothing_for(study_dir):
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    sampled = drawn_sample(study_dir)["trials"]
+    both_found_nothing(study_dir, sampled[:2])
+    assert run(study_dir, "report") == 0
+    text = (study_dir / "results" / "reference_set" / "report.md").read_text()
+    assert "Of 2 trials both traced and adjudicated, the trace had the outcome right for 0" in text
+    assert "For 2 of them both adjudicators searched and found no source that states a result." in text
+
+
+def test_too_many_sampled_trials_with_nothing_found_stop_the_freeze(study_dir, capsys):
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    sampled = drawn_sample(study_dir)["trials"]
+    adjudicate(study_dir, sampled[5:])
+    both_found_nothing(study_dir, sampled[:5])
+    capsys.readouterr()
+    assert run(study_dir, "freeze") == 1
+    assert "outcome right for only 35 of the 40" in capsys.readouterr().out
 
 
 def test_nothing_is_frozen_when_the_adjudicators_contradict_the_trace_too_often(study_dir, capsys):

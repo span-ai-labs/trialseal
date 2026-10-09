@@ -11,3 +11,5 @@ data/universe/
 private/
 # Model keys, written by scripts/setup_wizard.sh.
 .env
+# Adjudicators' forms and lists of disagreements are working files; the logs beside them are the record.
+adjudication/working/

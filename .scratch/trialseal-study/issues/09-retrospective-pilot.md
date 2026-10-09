@@ -53,3 +53,5 @@
 **Known limits.** The pilot is small because the models are new: there are few months between a stated cutoff and today. A wider but less clean estimate of the spread is possible from every readout after a model's last month of recall (about 30 trials for each model) and has not been run. The first wording of the probes (version 1) is kept in the private files and is not counted.
 
 **2026-10-09.** `study/pilot_traces.json` now records each trace file with its SHA-256, and the pilot refuses to run if one has changed or gone. The four files are as they were when the pilot was begun.
+
+**2026-10-09.** The 17 pilot trials can be adjudicated with `trialseal-adjudicate --set pilot` (ticket 05). A pilot trial for which both adjudicators find nothing becomes a trial with no readout found, and stops being a pilot trial.

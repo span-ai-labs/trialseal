@@ -28,6 +28,7 @@ trialseal-analysis = "trialforecast.report:main"
 trialseal-pilot = "trialforecast.pilot:main"
 trialseal-screening = "trialforecast.screen:main"
 trialseal-reference = "trialforecast.reference:main"
+trialseal-adjudicate = "trialforecast.adjudicate:main"
 
 [build-system]
 requires = ["hatchling"]

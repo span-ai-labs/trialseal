@@ -11,7 +11,9 @@ order of recording, so the same log always gives the same result.
 from __future__ import annotations
 
 import datetime as dt
+import math
 import pathlib
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Iterable, NamedTuple
 
@@ -43,8 +45,8 @@ class NotBlind(Exception):
 
 
 def normalised_name(name: str) -> str:
-    """One spelling per person: "Abhijoy" and "abhijoy " must not count as two adjudicators."""
-    return name.strip().casefold()
+    """One spelling per person: "Abhijoy S", "abhijoy s " and "Abhijoy  S" must not count as two adjudicators."""
+    return " ".join(unicodedata.normalize("NFKC", name).split()).casefold()
 
 
 def derive_outcome(endpoint_rule: str, endpoint_results: Iterable[str], early_stop: str | None = None) -> str | None:
@@ -77,8 +79,8 @@ def _check_reading(nct: str, source_type: str, outcome: str, hazard_ratio: float
         return
     if outcome == "void":
         raise ValueError(f"{nct}: a void trial has no hazard ratio")
-    if hazard_ratio <= 0:
-        raise ValueError(f"{nct}: hazard ratio {hazard_ratio} must be positive")
+    if not math.isfinite(hazard_ratio) or hazard_ratio <= 0:
+        raise ValueError(f"{nct}: hazard ratio {hazard_ratio} must be a positive, finite number")
     if not (hazard_ratio_endpoint or "").strip():
         raise ValueError(f"{nct}: a hazard ratio must say which endpoint it is for")
 
@@ -163,10 +165,12 @@ class Reconciliation:
     reason: str
     adjudicators: tuple[str, ...]
     recorded_on: dt.date
+    language: str | None = None  # settled only where the two read the language of the disclosure differently
 
     def __post_init__(self) -> None:
         require_trial_id(self.nct)
         object.__setattr__(self, "adjudicators", tuple(sorted({normalised_name(a) for a in self.adjudicators} - {""})))
+        object.__setattr__(self, "language", (self.language or "").strip().casefold() or None)
         if self.hazard_ratio is not None:
             object.__setattr__(self, "hazard_ratio", float(self.hazard_ratio))
         if len(self.adjudicators) < 2:
@@ -240,6 +244,11 @@ class AdjudicationLog:
             raise ValueError(f"the log holds fewer entries {self.sizes()} than it once did {sizes}")
         return AdjudicationLog(*(getattr(self, kind)[:n] for kind, n in zip(LOG_KINDS, sizes)))
 
+    def with_reconciliation(self, reconciliation: Reconciliation) -> AdjudicationLog:
+        """The log as it would stand with one more reconciliation."""
+        return AdjudicationLog(self.adjudications, (*self.reconciliations, reconciliation), self.withdrawals,
+                               self.forecast_access)
+
     def added_after(self, sizes: Iterable[int]) -> list:
         """Every entry added since the log held this many of each kind."""
         self.first(sizes)
@@ -311,16 +320,18 @@ class TrialResult:
 
 
 @dataclass
-class _Source:
-    """The state of one source of one trial while the log is replayed."""
+class SourceState:
+    """Where one source of one trial stands: who has read it, and whether they differed and have settled it."""
 
     readings: dict[str, Adjudication] = field(default_factory=dict)  # each adjudicator's current reading
     disputed: bool = False  # once two adjudicators have differed, only a reconciliation settles it
     reconciliation: Reconciliation | None = None
 
 
-def _what_was_read(a: Adjudication) -> tuple:
-    return (a.outcome, a.hazard_ratio, a.hazard_ratio_endpoint, a.disclosed_on, a.language,
+def what_was_read(a: Adjudication) -> tuple:
+    """Everything two adjudicators must agree on for a source's reading to stand."""
+    endpoint = None if a.hazard_ratio_endpoint is None else " ".join(a.hazard_ratio_endpoint.casefold().split())
+    return (a.outcome, a.hazard_ratio, endpoint, a.disclosed_on, a.language,
             a.endpoint_rule, a.endpoint_results, a.early_stop)
 
 
@@ -338,7 +349,7 @@ def _saw_forecasts_first(opened: dict, nct: str, who: Iterable[str], recorded_on
 
 def _replay(
     log: AdjudicationLog, analysis_date: dt.date
-) -> tuple[dict[tuple[str, str, str], _Source], set[tuple[str, str, str]], set[tuple[str, str, str]]]:
+) -> tuple[dict[tuple[str, str, str], SourceState], set[tuple[str, str, str]], set[tuple[str, str, str]]]:
     """Replay entries recorded by the analysis date, in order of recording.
 
     Returns each source's final state; the sources where a reading or reconciliation
@@ -352,20 +363,25 @@ def _replay(
          if e.recorded_on <= analysis_date),
         key=lambda e: (e.recorded_on, (Adjudication, Withdrawal, Reconciliation).index(type(e))),
     )
-    sources: dict[tuple[str, str, str], _Source] = {}
+    sources: dict[tuple[str, str, str], SourceState] = {}
     for entry in entries:
         key = (entry.nct, entry.source_type, entry.source)
         if isinstance(entry, Adjudication):
-            source = sources.setdefault(key, _Source())
+            source = sources.setdefault(key, SourceState())
+            earlier = source.readings.get(entry.adjudicator)
             source.readings[entry.adjudicator] = entry
-            source.reconciliation = None  # a reading entered after a reconciliation reopens the source
-            if len({_what_was_read(a) for a in source.readings.values()}) > 1:
+            # A reading entered after a reconciliation reopens the source, unless it only puts a quote right.
+            if earlier is None or what_was_read(earlier) != what_was_read(entry):
+                source.reconciliation = None
+            if len({what_was_read(a) for a in source.readings.values()}) > 1:
                 source.disputed = True
         elif isinstance(entry, Withdrawal):
             if key not in sources or entry.adjudicator not in sources[key].readings:
                 raise ValueError(f"{entry.nct}: {entry.adjudicator} has nothing to withdraw for {entry.source!r}")
             del sources[key].readings[entry.adjudicator]
-            if not sources[key].readings:
+            # A source that was read differently stays, with nobody's reading: reading it alike later does not
+            # dissolve the disagreement.
+            if not sources[key].readings and not sources[key].disputed:
                 del sources[key]
         else:
             source = sources.get(key)
@@ -392,6 +408,16 @@ def _replay(
             if all(opened[(key[0], name)] < min(disclosed) for name in saw_first):
                 after_reveal.add(key)
     return sources, not_blind, after_reveal
+
+
+def source_states(log: AdjudicationLog, as_of: dt.date) -> dict[tuple[str, str, str], SourceState]:
+    """Every source by trial, source type and source, as the log stood on a day.
+
+    Each has a reading in force, except a source that was read differently and
+    then withdrawn by both: that one is kept, with no readings, so that the
+    disagreement is remembered if it is read again.
+    """
+    return _replay(log, as_of)[0]
 
 
 class _Standing(NamedTuple):
@@ -432,6 +458,8 @@ def _standing_readings(
 
     for key, source in sources.items():
         nct, source_type, source_ref = key
+        if not source.readings:
+            continue  # read differently once and since withdrawn by both: nothing is in force, and it decides nothing
         any_reading = next(iter(source.readings.values()))
         dated = [a.disclosed_on for a in source.readings.values()]
         if source.reconciliation is not None:
@@ -451,7 +479,8 @@ def _standing_readings(
         if source.reconciliation is not None:
             settled = source.reconciliation
             reading = SourceReading(source_type, source_ref, settled.disclosed_on, settled.outcome,
-                                    settled.hazard_ratio, settled.hazard_ratio_endpoint, any_reading.language)
+                                    settled.hazard_ratio, settled.hazard_ratio_endpoint,
+                                    settled.language or any_reading.language)
         elif source.disputed:
             hold_back(nct, DISAGREEMENT)
             continue
@@ -535,20 +564,24 @@ def _require_today(what: str, nct: str, recorded_on: dt.date, today: dt.date) ->
 def record_adjudication(
     log_file: pathlib.Path, adjudication: Adjudication, forecast_access: Iterable[ForecastAccess], today: dt.date
 ) -> None:
-    """Append an adjudication to its log, unless it is a late reading of a source its author could have read blind.
+    """Append an adjudication to its log, if it may be recorded."""
+    require_recordable(adjudication, forecast_access, today)
+    records.append(log_file, adjudication)
+
+
+def require_recordable(adjudication: Adjudication, forecast_access: Iterable[ForecastAccess], today: dt.date) -> None:
+    """A reading is recorded on the day it is made, and not if its author could have read the source blind and did not.
 
     Someone who has opened a trial's forecasts may still read a source disclosed
     after they opened them: that reading is set aside in every registered analysis
     (ADR-0015). A source that was already public when they opened the forecasts
-    is refused, since nothing but a blind reading of it will ever count. A reading
-    is recorded on the day it is made.
+    is refused, since nothing but a blind reading of it will ever count.
     """
     _require_today("a reading", adjudication.nct, adjudication.recorded_on, today)
     opened = _first_opened(AdjudicationLog(forecast_access=tuple(forecast_access)))
     first_seen = opened.get((adjudication.nct, adjudication.adjudicator))
     if first_seen is not None and first_seen <= adjudication.recorded_on and adjudication.disclosed_on <= first_seen:
         raise NotBlind(f"{adjudication.adjudicator} opened the forecasts for {adjudication.nct} before adjudicating it")
-    records.append(log_file, adjudication)
 
 
 def record_forecast_access(log_file: pathlib.Path, access: ForecastAccess, today: dt.date) -> None:
@@ -560,20 +593,206 @@ def record_forecast_access(log_file: pathlib.Path, access: ForecastAccess, today
 
 
 def record_reconciliation(log_file: pathlib.Path, reconciliation: Reconciliation, log: AdjudicationLog, today: dt.date) -> None:
-    """Append a reconciliation to its log, if it settles a recorded disagreement, on the day it is made.
+    """Append a reconciliation to its log, if it may be recorded."""
+    require_reconcilable(reconciliation, log, today)
+    records.append(log_file, reconciliation)
+
+
+def require_reconcilable(reconciliation: Reconciliation, log: AdjudicationLog, today: dt.date) -> None:
+    """A reconciliation settles a recorded disagreement between the two who read the source, on the day it is made.
 
     Its adjudicators must still be blind, unless the source is a later one read
     after a reveal: that is set aside for the outcome whoever settles it, and
     settling it is how its hazard ratio comes to be one number (ADR-0015).
     """
     _require_today("a reconciliation", reconciliation.nct, reconciliation.recorded_on, today)
-    with_it = AdjudicationLog(log.adjudications, (*log.reconciliations, reconciliation), log.withdrawals,
-                              log.forecast_access)
-    _, not_blind, after_reveal = _replay(with_it, reconciliation.recorded_on)
+    sources, not_blind, after_reveal = _replay(log.with_reconciliation(reconciliation), reconciliation.recorded_on)
     source = (reconciliation.nct, reconciliation.source_type, reconciliation.source)
     if source in not_blind and source not in after_reveal:
         raise NotBlind(f"{reconciliation.nct}: reconciled after an adjudicator opened its forecasts")
-    records.append(log_file, reconciliation)
+    # A reconciliation settles what the two differed on. What they agreed on is not reopened by it.
+    first, second = (what_was_read(reading) for reading in sources[source].readings.values())
+    settled_endpoint = (None if reconciliation.hazard_ratio_endpoint is None
+                        else " ".join(reconciliation.hazard_ratio_endpoint.casefold().split()))
+    no_hazard_ratio = reconciliation.hazard_ratio is None  # settling that the source gives none leaves no endpoint either
+    for what, settled, position, may_differ in (
+        ("the outcome", reconciliation.outcome, 0, False),
+        ("the hazard ratio", reconciliation.hazard_ratio, 1, False),
+        ("the hazard ratio's endpoint", settled_endpoint, 2, no_hazard_ratio),
+        ("the disclosure date", reconciliation.disclosed_on, 3, False),
+        ("the language", reconciliation.language, 4, reconciliation.language is None),
+    ):
+        if first[position] == second[position] and settled != first[position] and not may_differ:
+            raise ValueError(f"{reconciliation.nct}: both adjudicators read {what} the same way, so the reconciliation "
+                             f"cannot change it")
+    if first[4] != second[4] and reconciliation.language not in (first[4], second[4]):
+        raise ValueError(f"{reconciliation.nct}: the adjudicators recorded different languages for the disclosure "
+                         f"({first[4]}, {second[4]}), so the reconciliation must say which language it was in")
+
+
+def record_withdrawal(log_file: pathlib.Path, withdrawal: Withdrawal, log: AdjudicationLog, today: dt.date) -> None:
+    """Append an adjudicator's withdrawal of a reading they have in force, on the day it is made.
+
+    A reading made blind cannot be taken back by someone who has since opened
+    the trial's forecasts: they would be choosing, with the forecasts in view,
+    which sources decide the result. A reading they made after opening them
+    counts for nothing and may be withdrawn. Nor can a reading of a reconciled
+    source be withdrawn: the two settled it together, and a new reading of the
+    source is how it is reopened.
+    """
+    _require_today("a withdrawal", withdrawal.nct, withdrawal.recorded_on, today)
+    source = source_states(log, today).get((withdrawal.nct, withdrawal.source_type, withdrawal.source))
+    if source is None or withdrawal.adjudicator not in source.readings:
+        raise ValueError(f"{withdrawal.nct}: {withdrawal.adjudicator} has no reading of {withdrawal.source!r} to withdraw")
+    if source.reconciliation is not None:
+        raise ValueError(f"{withdrawal.nct}: {withdrawal.source!r} has been reconciled; record a new reading of it "
+                         f"to reopen it")
+    opened = _first_opened(log).get((withdrawal.nct, withdrawal.adjudicator))
+    if opened is not None and opened <= today and source.readings[withdrawal.adjudicator].recorded_on < opened:
+        raise NotBlind(f"{withdrawal.adjudicator} opened the forecasts for {withdrawal.nct} before withdrawing a reading "
+                       f"made blind")
+    records.append(log_file, withdrawal)
+
+
+def require_fits_the_log(adjudication: Adjudication, log: AdjudicationLog, today: dt.date) -> None:
+    """Refuse a reading the log could not place in order among the day's other entries.
+
+    Entries of one day are replayed readings first, then withdrawals, then
+    reconciliations, whatever order they were made in. So a reading of a source
+    made on a day when a reading of it was withdrawn would be replayed beside the
+    withdrawn one, and a reading made on the day the source was reconciled would
+    be replayed before the reconciliation and not reopen it. Either waits a day.
+    """
+    source = (adjudication.nct, adjudication.source_type, adjudication.source)
+
+    def today_holds(entries) -> bool:
+        return any((e.nct, e.source_type, e.source) == source and e.recorded_on == today for e in entries)
+
+    if today_holds(log.withdrawals):
+        raise ValueError(f"{adjudication.nct}: a reading of this source was withdrawn today; it can be read again from tomorrow")
+    if today_holds(log.reconciliations):
+        raise ValueError(f"{adjudication.nct}: this source was reconciled today; a new reading of it can be recorded from tomorrow")
+
+
+
+# --- a search that found nothing ---------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class NothingFound:
+    """An adjudicator's finding, after searching, that no public source states the result of a trial's primary analysis.
+
+    It is kept beside the adjudication log and is no part of it: it gives a trial
+    no result. It is how two adjudicators say that a trial someone else took to
+    have read out has, as far as either can find, not.
+    """
+
+    nct: str
+    adjudicator: str
+    searched: str  # where they looked, in their own words; for one source, what it holds instead of a result
+    recorded_on: dt.date
+    # Given together when the finding is about one source the other adjudicator cited: having read it, this
+    # adjudicator finds that it does not state the result. That is not a search of the trial that found nothing.
+    source_type: str | None = None
+    source: str | None = None
+
+    def __post_init__(self) -> None:
+        require_trial_id(self.nct)
+        object.__setattr__(self, "adjudicator", normalised_name(self.adjudicator))
+        if not self.adjudicator:
+            raise ValueError(f"{self.nct}: a finding of nothing must name its adjudicator")
+        if not self.searched.strip():
+            raise ValueError(f"{self.nct}: a finding of nothing must say where the adjudicator looked")
+        require_plain_date(self.recorded_on, f"{self.nct}: recording date")
+        if (self.source is None) != (self.source_type is None) or (self.source is not None and not self.source.strip()):
+            raise ValueError(f"{self.nct}: a finding about one source names a source and its type together")
+        if self.source_type is not None and self.source_type not in SOURCE_TYPES:
+            raise ValueError(f"{self.nct}: source type must be one of {', '.join(SOURCE_TYPES)}, not {self.source_type!r}")
+
+    @property
+    def about(self) -> tuple[str, str, str] | None:
+        """The one source this finding is about, or None for a search of the trial."""
+        return None if self.source is None else (self.nct, self.source_type, self.source)
+
+
+NOTHING_FOUND = "nothing_found.jsonl"
+
+
+def read_nothing_found(directory: pathlib.Path) -> list[NothingFound]:
+    """The findings of nothing kept in a log's directory, in the order they were recorded."""
+    return records.read(directory / NOTHING_FOUND, NothingFound) if (directory / NOTHING_FOUND).exists() else []
+
+
+def _with_a_reading(log: AdjudicationLog, as_of: dt.date) -> dict[str, set[str]]:
+    """For each trial, the adjudicators with a reading of any of its sources in force."""
+    readers: dict[str, set[str]] = {}
+    for (nct, _, _), source in source_states(log, as_of).items():
+        if source.readings:
+            readers.setdefault(nct, set()).update(source.readings)
+    return readers
+
+
+def no_result_found(findings: Iterable[NothingFound], log: AdjudicationLog, as_of: dt.date) -> dict[str, tuple[str, ...]]:
+    """Trials that two adjudicators searched for and found nothing, and who they were, as things stood on a day.
+
+    A reading in force outweighs a finding of nothing: once either adjudicator
+    has read a source for the trial, it is waiting for the other to read that
+    source, and is no longer a trial with nothing found.
+    """
+    readers = _with_a_reading(log, as_of)
+    found: dict[str, set[str]] = {}
+    for finding in findings:
+        if finding.about is None and finding.recorded_on <= as_of and finding.nct not in readers:
+            found.setdefault(finding.nct, set()).add(finding.adjudicator)
+    return {nct: tuple(sorted(who)) for nct, who in found.items() if len(who) >= 2}
+
+
+def declined_sources(
+    findings: Iterable[NothingFound], log: AdjudicationLog, as_of: dt.date
+) -> dict[tuple[str, str, str], tuple[str, ...]]:
+    """Sources one adjudicator has read and another finds not to state the result, and who finds so.
+
+    Such a finding stands while someone else's reading of the source is in force
+    and its author has none of their own. The two then differ on whether the
+    source says anything, which the one withdraws or the other reads to resolve.
+    """
+    sources = source_states(log, as_of)
+    declined: dict[tuple[str, str, str], set[str]] = {}
+    for finding in findings:
+        readings = sources[finding.about].readings if finding.about in sources else {}
+        if finding.recorded_on <= as_of and readings and finding.adjudicator not in readings:
+            declined.setdefault(finding.about, set()).add(finding.adjudicator)
+    return {source: tuple(sorted(who)) for source, who in declined.items()}
+
+
+def require_nothing_found_recordable(finding: NothingFound, log: AdjudicationLog, today: dt.date) -> None:
+    """A finding of nothing is made on the day, blind, by someone with no reading of the trial in force.
+
+    Blind, because someone who has seen the forecasts could decline to find a
+    result they would rather not count. And an adjudicator who has read a source
+    for the trial has found something: they withdraw that reading first if it
+    was a mistake.
+    """
+    _require_today("a finding of nothing", finding.nct, finding.recorded_on, today)
+    if finding.about is not None:
+        readings = source_states(log, today)[finding.about].readings if finding.about in source_states(log, today) else {}
+        if finding.adjudicator in readings:
+            raise ValueError(f"{finding.nct}: {finding.adjudicator} has a reading of this source in force; withdraw it "
+                             f"to say the source does not state the result")
+        if not readings:
+            raise ValueError(f"{finding.nct}: nobody has a reading of this source in force, so there is nothing to differ "
+                             f"with; a source that states no result is simply not recorded")
+    elif finding.adjudicator in _with_a_reading(log, today).get(finding.nct, ()):
+        raise ValueError(f"{finding.nct}: {finding.adjudicator} has a reading of a source for {finding.nct} in force, "
+                         f"so cannot also have found nothing")
+    if _saw_forecasts_first(_first_opened(log), finding.nct, [finding.adjudicator], finding.recorded_on):
+        raise NotBlind(f"{finding.adjudicator} opened the forecasts for {finding.nct} before searching for its result")
+
+
+def record_nothing_found(log_file: pathlib.Path, finding: NothingFound, log: AdjudicationLog, today: dt.date) -> None:
+    """Append a finding of nothing to its file, if it may be recorded."""
+    require_nothing_found_recordable(finding, log, today)
+    records.append(log_file, finding)
 
 
 def adjudicator_agreement(log: AdjudicationLog) -> dict:

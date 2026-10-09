@@ -12,6 +12,11 @@ from trialforecast.forecasting import Candidate
 SCREENING_LOG = pathlib.Path("screening") / "screening.jsonl"
 DESIGN_REVIEWS = pathlib.Path("screening") / "design_reviews.jsonl"
 TRACES = pathlib.Path("data") / "readout_trace"
+# Each set of past trials the adjudicators read has its own log, and a list of the trials they are to read.
+REFERENCE_ADJUDICATION = pathlib.Path("adjudication") / "reference"
+REFERENCE_WORKLIST = REFERENCE_ADJUDICATION / "worklist.csv"
+PILOT_ADJUDICATION = pathlib.Path("adjudication") / "pilot"
+PILOT_WORKLIST = pathlib.Path("results") / "pilot" / "adjudication_worklist.csv"
 
 
 def latest_snapshot(root: pathlib.Path) -> pathlib.Path:
@@ -38,8 +43,11 @@ def read_records(path: pathlib.Path, record_type: type) -> list:
 
 def read_table(path: pathlib.Path) -> list[dict]:
     """A CSV as rows of trimmed text. A cell with no column to belong to makes the file unreadable."""
-    with path.open(newline="", encoding="utf-8-sig") as f:
-        rows = list(csv.DictReader(f))
+    try:
+        with path.open(newline="", encoding="utf-8-sig") as f:
+            rows = list(csv.DictReader(f))
+    except UnicodeDecodeError:
+        raise ValueError(f"{path} is not saved as UTF-8: in a spreadsheet, save it as \"CSV UTF-8\"") from None
     if any(None in row for row in rows):
         raise ValueError(f"{path}: a row has more cells than the header has columns")
     return [{key: (value or "").strip() for key, value in row.items()} for row in rows]

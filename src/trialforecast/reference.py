@@ -22,12 +22,15 @@ from typing import Iterable, Mapping
 import numpy as np
 
 from trialforecast import scoring, traces, universe
-from trialforecast.adjudication import TrialResult, adjudicator_agreement, awaiting_result, read_log, results
+from trialforecast.adjudication import (
+    TrialResult, adjudicator_agreement, awaiting_result, no_result_found, read_log, read_nothing_found, results,
+)
 from trialforecast.analysis import scored_hazard_ratio
 from trialforecast.forecasting import BaseRateForecaster, Candidate
 from trialforecast.screening import AWAITING_DESIGN_REVIEW, EXCLUDED_DESIGN, DesignReview, design_status
 from trialforecast.studyfiles import (
-    DESIGN_REVIEWS, TRACES, latest_snapshot, read_records, registry_records, sealed_as, write_table,
+    DESIGN_REVIEWS, REFERENCE_ADJUDICATION, REFERENCE_WORKLIST, TRACES, latest_snapshot, read_records, registry_records,
+    sealed_as, write_table,
 )
 from trialforecast.traces import CLEAR, IN_DOUBT, NEGATIVE, POSITIVE, UNRESOLVED, VOID
 from trialforecast.universe import ENDPOINT_TYPES, SPONSOR_TYPES
@@ -41,7 +44,6 @@ SAMPLE_SIZE, SAMPLE_SEED = 40, 20261009  # the adjudicators' sample is one draw,
 # If the adjudicators contradict the trace on more of their sample than this allows, the traces they did not read
 # cannot be relied on, and nothing is frozen until they have read those too.
 TRACE_ACCURACY_NEEDED = 0.9
-REFERENCE_ADJUDICATION = pathlib.Path("adjudication") / "reference"
 SAMPLE = REFERENCE_ADJUDICATION / "sample.json"
 FROZEN = pathlib.Path("study") / "base_rates.json"
 
@@ -97,18 +99,21 @@ def _as_traced(row: traces.TracedRow, candidate: Candidate) -> tuple[str, dt.dat
 def reference_trials(
     trace_files: Iterable[pathlib.Path], candidates: Mapping[str, Candidate], rechecks: Iterable[pathlib.Path] = (),
     adjudicated: Mapping[str, TrialResult] | None = None, awaiting_adjudication: Iterable[str] = (),
-    design_reviews: Iterable[DesignReview] = (), as_of: dt.date | None = None,
+    design_reviews: Iterable[DesignReview] = (), as_of: dt.date | None = None, no_result_found: Iterable[str] = (),
 ) -> list[ReferenceTrial]:
     """Every traced candidate with a reference class, each in one place.
 
     The design comes first: a trial whose design was ruled out is left out, and one
     tagged for exclusion review waits for a ruling. Then the result, from the most
-    careful reading there is. The adjudicators' settled result stands above all;
-    while they have read a trial and not yet settled it, it is in doubt. Next a
+    careful reading there is. The adjudicators' settled result stands above all,
+    and so does their finding that no source states a result: the trial is then
+    unresolved, or void if the trace found it had ended without an analysis. While they have read a trial and not yet
+    settled it, it is in doubt. Next a
     re-check, which replaces the first trace unless the re-check is itself unsure.
     A first trace of low confidence does not count until it has been re-checked.
     """
     adjudicated, awaiting, reviews = adjudicated or {}, set(awaiting_adjudication), list(design_reviews)
+    nothing_found = set(no_result_found)
     rechecked = {row.nct: row for row in traces.read_traces(rechecks)}
     trials = []
     for row in traces.read_traces(trace_files):
@@ -126,6 +131,10 @@ def reference_trials(
             hazard_ratio, _ = scored_hazard_ratio(result, sealed_as(candidate), as_of or dt.date.max)
             trials.append(ReferenceTrial(**known, place=result.outcome, readout_date=result.readout_date,
                                          hazard_ratio=hazard_ratio, adjudicated=True))
+        elif row.nct in nothing_found:
+            # No source states a result. If the trace found the trial had ended without one, the two agree: it is void.
+            ended_without_analysis = _as_traced(again or row, candidate)[0] == VOID
+            trials.append(ReferenceTrial(**known, place=VOID if ended_without_analysis else UNRESOLVED, adjudicated=True))
         elif row.nct in awaiting:
             trials.append(ReferenceTrial(**known, place=IN_DOUBT))
         elif again is not None:
@@ -256,14 +265,25 @@ def adjudication_sample(trials: Iterable[ReferenceTrial], size: int = SAMPLE_SIZ
     return sorted(random.Random(SAMPLE_SEED).sample(to_read, min(size, len(to_read))))
 
 
-def trace_accuracy(traced: Iterable[ReferenceTrial], adjudicated: Mapping[str, TrialResult]) -> dict:
+def trace_accuracy(
+    traced: Iterable[ReferenceTrial], adjudicated: Mapping[str, TrialResult], no_result_found: Iterable[str] = ()
+) -> dict:
     """How often one reader's trace matched what the adjudicators settled, for trials both have read.
 
-    This is what says whether the traced trials the adjudicators did not read can be relied on.
+    This is what says whether the traced trials the adjudicators did not read can
+    be relied on. A trial the trace took to be positive or negative, for which
+    both adjudicators searched and found nothing, is one the trace got wrong. One
+    the trace took to have ended without an analysis, for which they found
+    nothing, is one it got right: there is no result.
     """
+    nothing_found = set(no_result_found) - set(adjudicated)
     both = [(t, adjudicated[t.nct]) for t in traced if t.nct in adjudicated and (t.clear or t.place == VOID)]
+    missed = sum(t.clear and t.nct in nothing_found for t in traced)
+    no_result_either = sum(t.place == VOID and t.nct in nothing_found for t in traced)
     dated = [(t.readout_date, r.readout_date) for t, r in both if t.readout_date and r.readout_date]
-    return {"trials": len(both), "outcome_matched": sum(t.place == r.outcome for t, r in both),
+    return {"trials": len(both) + missed + no_result_either,
+            "outcome_matched": sum(t.place == r.outcome for t, r in both) + no_result_either,
+            "no_result_found": missed,
             "date_within_a_week": sum(abs((mine - theirs).days) <= 7 for mine, theirs in dated),
             "date_later_than_adjudicated": sum((mine - theirs).days > 7 for mine, theirs in dated)}
 
@@ -281,6 +301,7 @@ class _Study:
     traced: list[ReferenceTrial]  # as one reader traced them, with re-checks
     trials: list[ReferenceTrial]  # with the adjudicators' results in place of the trace wherever they have settled one
     adjudicated: dict[str, TrialResult]
+    no_result_found: set[str]  # trials both adjudicators searched for and found nothing
     agreement: dict
     made_from: list[pathlib.Path]  # every file the figures rest on
 
@@ -292,11 +313,13 @@ def _load(root: pathlib.Path, today: dt.date) -> _Study:
                    design_reviews=read_records(root / DESIGN_REVIEWS, DesignReview))
     log = read_log(root / REFERENCE_ADJUDICATION)
     adjudicated = results(log, today)
+    nothing_found = set(no_result_found(read_nothing_found(root / REFERENCE_ADJUDICATION), log, today))
     made_from = [*trace_files, *sources["rechecks"], *sorted((root / REFERENCE_ADJUDICATION).glob("*.json*")),
                  root / DESIGN_REVIEWS]
     return _Study(root, today, candidates, reference_trials(**sources),
-                  reference_trials(**sources, adjudicated=adjudicated, awaiting_adjudication=awaiting_result(log, today), as_of=today),
-                  adjudicated, adjudicator_agreement(log), made_from)
+                  reference_trials(**sources, adjudicated=adjudicated, awaiting_adjudication=awaiting_result(log, today),
+                                   as_of=today, no_result_found=nothing_found),
+                  adjudicated, nothing_found, adjudicator_agreement(log), made_from)
 
 
 def _share(value: float | None) -> str:
@@ -331,9 +354,9 @@ def _report_text(study: _Study) -> str:
     for row in hazard_ratio_table(trials):
         cells = " | ".join("" if row[key] is None else f"{row[key]:.2f}" for key in ("median", "low", "high"))
         lines.append(f"| {row['reference_class']} | {row['trials']} | {cells} |")
-    agreement, accuracy = study.agreement, trace_accuracy(study.traced, study.adjudicated)
+    agreement, accuracy = study.agreement, trace_accuracy(study.traced, study.adjudicated, study.no_result_found)
     lines += ["", "## Adjudication", ""]
-    if not agreement["sources"]:
+    if not agreement["sources"] and not accuracy["trials"]:
         lines += ["The adjudicators have not yet read their sample, so neither their agreement nor the accuracy of the "
                   "trace is measured."]
     else:
@@ -343,7 +366,8 @@ def _report_text(study: _Study) -> str:
                   f"{agreement['disclosure_date_agreed']}.",
                   f"Of {counted(accuracy['trials'], 'trial')} both traced and adjudicated, the trace had the outcome right "
                   f"for {accuracy['outcome_matched']} and the readout date within a week for {accuracy['date_within_a_week']}; "
-                  f"it dated {accuracy['date_later_than_adjudicated']} later than the adjudicators did."]
+                  f"it dated {accuracy['date_later_than_adjudicated']} later than the adjudicators did. For "
+                  f"{accuracy['no_result_found']} of them both adjudicators searched and found no source that states a result."]
     return "\n".join(lines) + "\n"
 
 
@@ -388,7 +412,7 @@ def sample(study: _Study) -> int:
         (study.root / SAMPLE).parent.mkdir(parents=True, exist_ok=True)
         (study.root / SAMPLE).write_text(json.dumps(drawn, indent=2) + "\n", encoding="utf-8")
     to_read = sorted({*drawn["trials"], *(t.nct for t in study.traced if t.place == IN_DOUBT)})
-    worklist = study.root / REFERENCE_ADJUDICATION / "worklist.csv"
+    worklist = study.root / REFERENCE_WORKLIST
     write_table(worklist, ("nct", "acronym", "title", "scored_endpoint"),
                 [(nct, study.candidates[nct].get("acronym"), study.candidates[nct].get("brief_title"),
                   study.candidates[nct]["scored_endpoint"]) for nct in to_read])
@@ -420,10 +444,10 @@ def freeze(study: _Study) -> int:
     if joined:
         raise NotFrozen(f"{counted(len(joined), 'trial')} joined the reference set after the sample was drawn on "
                         f"{drawn['drawn_on']}, so the sample no longer speaks for it: {', '.join(joined[:10])}")
-    unread = [nct for nct in drawn["trials"] if nct in now and nct not in study.adjudicated]
+    unread = [nct for nct in drawn["trials"] if nct in now and nct not in study.adjudicated and nct not in study.no_result_found]
     if unread:
         raise NotFrozen(f"the adjudicators have not settled {len(unread)} of the {len(drawn['trials'])} trials in their sample")
-    accuracy = trace_accuracy(study.traced, study.adjudicated)
+    accuracy = trace_accuracy(study.traced, study.adjudicated, study.no_result_found)
     if accuracy["trials"] and accuracy["outcome_matched"] < TRACE_ACCURACY_NEEDED * accuracy["trials"]:
         raise NotFrozen(f"the trace had the outcome right for only {accuracy['outcome_matched']} of the {accuracy['trials']} "
                         f"trials the adjudicators read, so the traces they did not read cannot be relied on")

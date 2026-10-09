@@ -36,3 +36,36 @@ Known limits:
 - Blindness rests on the record of who opened forecasts. Nothing writes that record yet; ticket 16 (reveal) must write it, and the recording date of an adjudication is self-declared.
 - The hazard ratio's endpoint is recorded as text and is not yet checked against the scored endpoint named in the batch. Ticket 13 should check it.
 - "As of the analysis date" means entries recorded by that date, so a paper published before it but adjudicated after is not counted.
+
+**2026-10-09, the adjudicators' command.** `trialseal-adjudicate form|record|status|disagreements|reconcile|withdraw --set reference|pilot` (`adjudicate.py`, tests in `tests/test_adjudicate.py`; how to use it is in `adjudication/ADJUDICATION_BRIEF.md`). Each adjudicator fills in a spreadsheet form; filled rows become readings dated the day they are recorded, all or none. The other adjudicator's form shows the sources cited and nothing of what was read. Forms and the list of disagreements are working files under `adjudication/working/`, which is not tracked.
+
+**A finding of nothing** is new (`NothingFound`, kept in `nothing_found.jsonl` beside the log). An adjudicator records that they searched and found no source that states a trial's result; when both have, and neither has a reading in force, the trial has no result found. In the reference set it is then unresolved (void if the trace had it as ended without analysis), counts against the trace where the trace had a result, and no longer blocks the freeze. In the pilot it is a trial with no readout found. The same record, naming a source, says that a source the other cited does not state the result; the two then differ and may talk, and it is resolved by a withdrawal or by reading the source.
+
+**Two adversarial reviews and a standards review** drove the command against the rules. Fixed with a failing test first, in the rules themselves:
+
+- A reading made blind cannot be withdrawn by someone who has since opened the forecasts; a reading of a reconciled source cannot be withdrawn at all.
+- A source read differently stays so after both withdraw their readings; reading it alike later does not settle it.
+- A reconciliation cannot change what both readings share: the outcome, the hazard ratio, its endpoint, the disclosure date or the language. Where the languages differ it must say which.
+- A reading that only puts a quote right does not reopen a reconciled source.
+- A reading of a source is refused on a day when a reading of it was withdrawn or it was reconciled, because one day's entries are replayed readings, then withdrawals, then reconciliations. A reviewer ran 1,800 random sequences through the command against a model that applied them in real order; the replayed state matched every time.
+- Hazard ratios must be finite; names are compared without case, spacing or Unicode form; endpoint names without case or spacing.
+
+And in the command: one source cannot enter under two spellings of its address or two source types; a trial's readings are not laid open while either adjudicator has a cited source of it still to read; a list of disagreements is checked against the readings it was written from by a mark a spreadsheet leaves alone; nothing is added to the reference log once the base rates are frozen; a log holding an entry dated after today stops every step.
+
+**Rules introduced here, for the protocol.**
+
+1. A correction is a new reading recorded on purpose (`--revise`); a withdrawal is for a source that should not have been cited.
+2. The second adjudicator reads the sources the first cited, under the same address and source type, and adds any other they know of.
+3. A hazard ratio outside 0.05 to 20 is refused as a slipped decimal point.
+4. A finding of nothing is made blind, on the day, by someone with no reading of the trial in force.
+
+**Known limits.**
+
+- The command cannot tell who is typing. That each adjudicator works alone, and that both are present at a reconciliation, rests on them; the logs are plain text in the repository.
+- The rules trust the names in a log. Only the command checks a name against `study/adjudicators.json`, which now names one person; the second adjudicator's name is to be added by the study lead. A file edited by hand, or an adjudicator replaced part-way through a disagreement, is not caught.
+- The source type cannot be disagreed about: it is part of what names a source. Changing it is a withdrawal and a new reading the next day.
+- The look-alike check on addresses catches slips, not evasions (a tracking parameter, a mobile host).
+- An address typed on one's own form and not yet read does not hold back the list of disagreements.
+- Five trials are on both the reference and the pilot worklists and are read once for each.
+- There is no set yet for trials with sealed forecasts: that needs the readout monitor (ticket 12) to say which trials are due, and the reveal (ticket 16) to write who opened which forecasts.
+- A spreadsheet may turn a quote that begins with `=` into a formula.

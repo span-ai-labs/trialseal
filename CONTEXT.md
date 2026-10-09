@@ -150,6 +150,18 @@ _Avoid_: Labelling, annotation, resolution
 The state of a trial that has a readout the adjudicators have not yet settled: read by one of them only, or read differently by the two.
 _Avoid_: Pending, unresolved, in review
 
+**Reading**:
+One adjudicator's record of what one source shows about a trial: its date, the result of each primary endpoint, and any hazard ratio. A source's reading stands when both adjudicators recorded the same one.
+_Avoid_: Entry, call, label
+
+**Withdrawal**:
+An adjudicator taking back a reading, with a reason, for example of a source that turned out to be about another trial. The reading stays in the log.
+_Avoid_: Deletion, retraction
+
+**Finding of nothing**:
+An adjudicator's record that they searched and found no public source that states the result of a trial's primary analysis. When both adjudicators have one and neither has a reading in force, the trial has no result found. It gives the trial no result and is kept beside the adjudication log.
+_Avoid_: Negative finding, null result, not found
+
 **Reconciliation**:
 The two adjudicators' settled reading of a source they first read differently, recorded with its reason. Until it exists the trial has no result.
 _Avoid_: Tie-break, override, arbitration
