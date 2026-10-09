@@ -1,0 +1,14 @@
+{
+  "source": "ClinicalTrials.gov API v2",
+  "api_version": "2.0.5",
+  "data_timestamp_start": "2026-10-09T09:00:05",
+  "data_timestamp_end": "2026-10-09T09:00:05",
+  "retrieved_utc_start": "2026-10-09T16:00:00+00:00",
+  "retrieved_utc_end": "2026-10-09T16:02:24+00:00",
+  "query_cond": "cancer OR neoplasm OR tumor OR carcinoma OR lymphoma OR leukemia OR myeloma OR sarcoma OR melanoma OR glioma OR glioblastoma OR myelodysplastic OR myelofibrosis OR malignancy OR adenocarcinoma OR mesothelioma OR neuroblastoma OR metastatic OR metastases OR malignant OR NSCLC OR SCLC OR CLL OR AML OR HCC OR DLBCL OR GIST OR macroglobulinemia OR myeloproliferative OR astrocytoma OR medulloblastoma OR cholangiocarcinoma OR thymoma",
+  "filter_advanced": "AREA[StudyType]INTERVENTIONAL AND AREA[Phase]PHASE3 AND AREA[DesignAllocation]RANDOMIZED AND AREA[PrimaryCompletionDate]RANGE[2023-10-01,2035-12-31]",
+  "records": 3696,
+  "total_count_reported": 3696,
+  "sha256_of_uncompressed_jsonl": "1364d8cff4263712696e722b8945bebd019bad5996c9df03a358561167b392d9",
+  "note": "Superset of the forecasting universe; no time-to-event or hand-review filter applied."
+}

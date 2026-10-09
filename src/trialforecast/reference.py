@@ -21,7 +21,7 @@ from typing import Iterable, Mapping
 
 import numpy as np
 
-from trialforecast import scoring, traces, universe
+from trialforecast import records, scoring, traces, universe
 from trialforecast.adjudication import (
     LOG_KINDS, NOTHING_FOUND, TrialResult, adjudicator_agreement, awaiting_result, no_result_found, read_log,
     read_nothing_found, require_nothing_from_the_future, results,
@@ -235,6 +235,9 @@ def frozen_base_rates(trials: Iterable[ReferenceTrial], frozen_on: dt.date) -> d
             "pooled": sorted(pooled), "hazard_ratios_pooled": sorted(pooled_ratios), "counts": counts}
 
 
+RULINGS_COUNTED = "design rulings on the trials the figures count"
+
+
 def _made_from(root: pathlib.Path) -> dict[str, str | None]:
     """Every file the figures rest on, with its SHA-256; or None for one that could hold something and does not exist.
 
@@ -242,9 +245,16 @@ def _made_from(root: pathlib.Path) -> dict[str, str | None]:
     """
     log = root / REFERENCE_ADJUDICATION
     files = {*(root / TRACES).glob("trace_*.csv"), *(root / TRACES).glob("rechecks*.csv"), *log.glob("*.json*"),
-             *(log / file_name for file_name, _ in LOG_KINDS.values()), log / NOTHING_FOUND, root / DESIGN_REVIEWS}
-    return {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
-            for path in sorted(files)}
+             *(log / file_name for file_name, _ in LOG_KINDS.values()), log / NOTHING_FOUND}
+    made_from = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+                 for path in sorted(files)}
+    # Design rulings go on being made on candidates still to read out, month after month. The figures rest only on
+    # the rulings for the trials they count: those the sample was drawn from, and those then in doubt.
+    drawn = _drawn(root) or {}
+    counted_trials = {*drawn.get("drawn_from", ()), *drawn.get("in_doubt", ())}
+    rulings = [records.to_line(review) for review in read_records(root / DESIGN_REVIEWS, DesignReview) if review.nct in counted_trials]
+    made_from[RULINGS_COUNTED] = hashlib.sha256("\n".join(rulings).encode()).hexdigest()
+    return made_from
 
 
 def base_rate_forecaster(root: pathlib.Path) -> BaseRateForecaster:
@@ -458,8 +468,10 @@ def sample(study: _Study) -> int:
     where its design stood, so that nothing changed afterwards can stand for what
     was drawn. The list the adjudicators are given also holds the trials the
     trace left in doubt, which only they can settle; it does not say which those
-    are. If they have settled the sample and the trace did not match them often
-    enough, the list becomes every traced trial with a result.
+    are, and any trial with a result traced since the draw, which joins the
+    reference set only on their reading of it. If they have settled the sample
+    and the trace did not match them often enough, the list becomes every traced
+    trial with a result.
     """
     drawn = _drawn(study.root)
     if drawn is None:
@@ -475,7 +487,8 @@ def sample(study: _Study) -> int:
                  "traced_as": _traced_as(study.traced), "design_as": _design_as(study.traced)}
         (study.root / SAMPLE).parent.mkdir(parents=True, exist_ok=True)
         (study.root / SAMPLE).write_text(json.dumps(drawn, indent=2) + "\n", encoding="utf-8")
-    to_read = {*drawn["trials"], *(t.nct for t in study.traced if t.place == IN_DOUBT)}
+    to_read = {*drawn["trials"], *(t.nct for t in study.traced if t.place == IN_DOUBT),
+               *(nct for nct in _to_read(study.traced) if nct not in drawn.get("traced_as", {}))}  # and any traced since
     borne_out, accuracy = _sample_bears_the_trace_out(study, drawn["trials"])
     if all(_settled(study, nct) for nct in drawn["trials"]) and not borne_out:
         to_read |= set(_to_read(study.traced))
@@ -503,10 +516,12 @@ def _require_as_drawn(study: _Study, drawn: dict) -> None:
         raise NotFrozen(f"{study.root / SAMPLE} is not the draw of {SAMPLE_SIZE} from the trials it names")
     as_drawn, design_then = drawn.get("traced_as", {}), drawn.get("design_as", {})
     as_now, design_now = _traced_as(study.traced), _design_as(study.traced)
-    joined = sorted(set(as_now) - set(as_drawn))
+    # A trial traced after the draw was not there to be sampled, so the sample does not vouch for its trace. If it
+    # has a result it joins only on the adjudicators' own reading of it.
+    joined = sorted(nct for nct in set(_to_read(study.traced)) - set(as_drawn) if not _settled(study, nct))
     if joined:
-        raise NotFrozen(f"{counted(len(joined), 'trial')} joined the reference set after {when}, so the sample no longer "
-                        f"speaks for it: {', '.join(joined[:10])}")
+        raise NotFrozen(f"{counted(len(joined), 'trial')} traced after {when} have not been settled by both adjudicators: "
+                        f"{', '.join(joined[:10])}; `trialseal-reference sample` lists them")
     # A trial with a result, or left in doubt, is part of what the adjudicators are checking. One with no readout is
     # not counted in any figure and may yet be sealed, so a ruling that later excludes its design is no concern here.
     checked = {*drawn["drawn_from"], *drawn.get("in_doubt", ())}

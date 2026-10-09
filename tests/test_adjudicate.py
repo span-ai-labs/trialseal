@@ -725,13 +725,15 @@ def test_a_list_whose_settlement_no_longer_fits_the_readings_is_written_afresh(s
 def test_a_typed_settlement_is_not_written_over_when_its_trial_gains_a_source(study_dir, capsys):
     disagreements = a_disagreement(study_dir)
     fill(disagreements, {"NCT0001": SETTLED})
-    reads(study_dir, {"NCT0003": met(nct="NCT0001", source_type="paper_or_regulator", source="https://example.test/paper")})
+    paper = met(nct="NCT0001", source_type="paper_or_regulator", source="https://example.test/paper")
+    assert reads(study_dir, {"NCT0003": paper}, today=TOMORROW) == 0
+    assert len(log_of(study_dir).adjudications) == 3
     capsys.readouterr()
     # The trial is now held back for the paper, but this source was laid open before and its settlement still fits.
-    assert run(study_dir, "disagreements") == 0
+    assert run(study_dir, "disagreements", today=TOMORROW) == 0
     row, = rows_of(disagreements)
     assert (row["source"], row["reason"]) == (TOPLINE, SETTLED["reason"])
-    assert run(study_dir, "reconcile", by=BOTH) == 0 and len(log_of(study_dir).reconciliations) == 1
+    assert run(study_dir, "reconcile", by=BOTH, today=TOMORROW) == 0 and len(log_of(study_dir).reconciliations) == 1
 
 
 def test_a_slip_in_a_reconciliation_is_put_right_on_purpose_and_both_stay_in_the_log(study_dir, capsys):
@@ -749,6 +751,23 @@ def test_a_slip_in_a_reconciliation_is_put_right_on_purpose_and_both_stay_in_the
     assert run(study_dir, "reconcile", "--revise", by=BOTH, today=TOMORROW) == 0
     assert [r.hazard_ratio for r in log_of(study_dir).reconciliations] == [0.27, 0.72]
     assert results(log_of(study_dir), TOMORROW)["NCT0001"].hazard_ratio == 0.72
+
+
+def test_a_correction_typed_for_a_reconciled_source_is_kept_when_the_list_is_written_again(study_dir, capsys):
+    disagreements = a_disagreement(study_dir)
+    fill(disagreements, {"NCT0001": {**SETTLED, "settled_hazard_ratio": "0.27"}})
+    run(study_dir, "reconcile", by=BOTH)
+    run(study_dir, "disagreements", "--reread", "NCT0001", today=TOMORROW)
+    corrected = {**SETTLED, "reason": "0.27 was a slip for 0.72"}
+    fill(disagreements, {"NCT0001": corrected})
+    # Before they record it, someone runs the plain step. The correction is not what the log holds, so it is kept.
+    capsys.readouterr()
+    assert run(study_dir, "disagreements", today=TOMORROW) == 0
+    row, = rows_of(disagreements)
+    assert (row["settled_hazard_ratio"], row["reason"]) == ("0.72", corrected["reason"])
+    assert run(study_dir, "reconcile", "--revise", by=BOTH, today=TOMORROW) == 0
+    # Once recorded it is what the log holds, and the list is empty again.
+    assert run(study_dir, "disagreements", today=TOMORROW) == 0 and rows_of(disagreements) == []
 
 
 def test_a_list_with_one_settlement_that_still_fits_and_one_that_does_not_keeps_the_one_and_says_so(study_dir, capsys):

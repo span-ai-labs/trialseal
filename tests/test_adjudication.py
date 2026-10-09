@@ -948,3 +948,35 @@ def test_the_day_guards_are_about_one_source_and_leave_the_trials_other_sources_
                  withdrawals=[withdrawn("first", day)])
     require_fits_the_log(adjudicated(adjudicator="second", **EARLY_PAPER, recorded_on=day), log, day)
 
+
+# --- gaps the fifth pass found in these tests ------------------------------------------------------
+
+
+def test_a_difference_on_one_trial_leaves_a_new_source_of_another_trial_independent():
+    later = TOPLINE_DAY + dt.timedelta(days=5)
+    other = [adjudicated(nct="NCT2", adjudicator=who, recorded_on=later) for who in ("first", "second")]
+    log = log_of(HAZARD_RATIO_DISPUTE + other)
+    assert results(log, LATER)["NCT2"].outcome == "positive" and awaiting_result(log, LATER) == {"NCT1": "disagreement"}
+    assert adjudicator_agreement(log)["read_after_the_two_had_talked"] == 0
+
+
+def test_a_third_source_cited_after_one_read_after_talk_is_read_after_talk_too():
+    second_day, third_day = TOPLINE_DAY + dt.timedelta(days=2), TOPLINE_DAY + dt.timedelta(days=4)
+    abstract = dict(source_type="conference", source="https://example.test/abstract", disclosed_on=TOPLINE_DAY)
+    log = log_of(HAZARD_RATIO_DISPUTE
+                 + [adjudicated(adjudicator=who, recorded_on=second_day, **abstract) for who in ("first", "second")]
+                 + [adjudicated(adjudicator=who, recorded_on=third_day, **EARLY_PAPER) for who in ("first", "second")])
+    states = source_states(log, LATER)
+    assert all(states[("NCT1", cells["source_type"], cells["source"])].after_talk for cells in (abstract, EARLY_PAPER))
+    assert results(log, LATER) == {} and adjudicator_agreement(log)["read_after_the_two_had_talked"] == 2
+
+
+def test_a_source_dissented_from_and_then_read_after_talk_is_counted_apart_once():
+    second_day, third_day = TOPLINE_DAY + dt.timedelta(days=2), TOPLINE_DAY + dt.timedelta(days=4)
+    abstract = dict(source_type="conference", source="https://example.test/abstract", disclosed_on=TOPLINE_DAY)
+    late_dissent = Dissent(nct="NCT1", adjudicator="second", reason="an unrelated abstract", recorded_on=third_day,
+                           **{k: abstract[k] for k in ("source_type", "source")})
+    log = log_of(HAZARD_RATIO_DISPUTE + [adjudicated(adjudicator="first", recorded_on=second_day, **abstract)], dissents=[late_dissent])
+    agreement = adjudicator_agreement(log)
+    assert (agreement["one_found_no_result_stated"], agreement["read_after_the_two_had_talked"]) == (1, 0)
+

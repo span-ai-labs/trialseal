@@ -4,7 +4,7 @@ Two adjudicators each read the public sources about a trial and record what they
 
 ## Working alone
 
-- Do not open the log files under `adjudication/reference/` or `adjudication/pilot/` (the `.jsonl` files), the trace files under `data/readout_trace/`, or anything under `private/` or `results/pilot/` other than the list of trials.
+- Do not open the log files under `adjudication/reference/` or `adjudication/pilot/` (the `.jsonl` files) or `adjudication/reference/sample.json`, the trace files under `data/readout_trace/`, anything under `results/reference_set/`, or anything under `private/` or `results/pilot/` other than the list of trials.
 - Do not talk to the other adjudicator about a trial until `status` shows it as `settled`, `no result found` or `read differently`. One exception is given under "When something is wrong".
 - For trials with sealed forecasts, never open the forecasts.
 
@@ -109,7 +109,7 @@ Each row shows both readings of one source. Leave those cells and `as_listed` al
 | `settled_language` | Only if you recorded different languages: which it is |
 | `reason` | Why the readings differed and why this is right |
 
-A source first cited for a trial after the two of you had come to differ on another of its sources is listed here even if you then read it alike. You may have talked about the trial by then, so those two readings are not independent; settle it with a reason like any other. For the same cause, a new source for a trial cannot be recorded on the day the two of you first differ on it: record it the next day.
+A source first cited for a trial after the two of you had come to differ on another of its sources, and had not yet reconciled that one, is listed here even if you then read it alike. You may have talked about the trial by then, so those two readings are not independent; settle it with a reason like any other. For the same cause, a new source for a trial cannot be recorded on the day the two of you first differ on it: record it the next day.
 
 What both of you read the same way cannot be changed here. If you both recorded the same outcome and differ only on the date, the settled outcome is that outcome. Two readings can also differ only in how they were written down, for example `met` against an early stop for efficacy, or the endpoint results in another order. That is reconciled like any other difference.
 

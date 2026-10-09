@@ -115,3 +115,31 @@ And in the command: one source cannot enter under two spellings of its address o
 
 - The code is not among what a draw or a freeze records. The list of companies the registry classes otherwise, for one, is in the code; the commit of the freeze is its record.
 - Tests named for the newest behaviours were again found to pass with the behaviour broken in several places; the ones the review named now have tests. Four passes of review have each found a dozen or more problems, the last in the freeze, not the rules. Read this again before the first reveal.
+
+**2026-10-10, fifth and last review.** The fifth pass was asked to sort what it found into what must be fixed and what need not block. It found no way to give a trial a result or frozen figures the rules forbid, and no way for one adjudicator to see the other's reading early. Its random-sequence run was 11,000 sequences of 18 to 48 command steps (114,397 accepted), against a model that includes the rule on sources read after talk: no unreplayable log, no failed command, no stuck state, and no settled result differing from the model except on the two same-day edges listed below. A further 1,500 sequences drove the reference set through to the freeze: no early freeze, and every honest finish froze.
+
+Two things had to be fixed, and are, with a failing test first:
+
+- A correction typed for a reconciled source was dropped without a word when the list of disagreements was written again. It is kept unless it is exactly what the log already holds.
+- Honest adjudication could leave a sponsor type with fewer than 20 clear results, after which nothing could be traced to make it up and the freeze could never happen. A trial traced after the draw now joins the reference set once both adjudicators have settled it; `trialseal-reference sample` lists such trials.
+
+One more is fixed because it was certain to bite later: after the freeze, any design ruling at all made the frozen figures refuse to load. They now rest only on the rulings for the trials they count.
+
+Of 67 deliberate breakages of the fourth round's behaviours, 12 passed the tests. Each now has a test, except two that cannot be told apart with two adjudicators.
+
+**Decided on the study lead's behalf.**
+
+11. A trial with a result that is traced after the draw joins the reference set only on both adjudicators' reading of it. One traced after the draw with no readout is in no figure and needs nobody's reading.
+
+**Accepted limits, from the fifth pass's second pile. None changes a result or shows a reading early.**
+
+- Two same-day edges in the rule on sources read after talk. A reading of a reconciled source withdrawn and a new source cited on the same day is not treated as read after talk, though the next day it would be; and a source reconciled and a new source cited on the same day needs a reconciliation, though the next day it would not. In one form that reopens a reconciled source and cites a new one, the order of the rows decides.
+- Once a source read after talk is first cited, another new source for that trial is refused that day, with a message that says the two first differed today. The message can tell an adjudicator that the two differ before the trial is laid open.
+- A hand-edited `sample.json` is caught for its sampled trials, marks and seed, but not for a reordered or shortened list of the trials it was drawn from, nor for a removed snapshot entry. The frozen file is not checked against a hand edit of its own figures, and the pinned snapshot is not re-checked when the frozen figures are loaded. The snapshot is pinned by the hash of the compressed file, so the same records compressed again are refused.
+- In the read-everything path, the list shrinks back to the sample if a sampled trial becomes unsettled again.
+- A tagged trial awaiting a design ruling at the draw can afterwards only be excluded. There is none in the real draw.
+- The pilot report leaves out the counted-apart numbers when no pair of readings was compared.
+- "DOI 10.…" without a colon, a DOI with a trailing full stop or a query, and a publisher's own address for the same paper are still separate sources.
+- The form takes a trial's primary outcomes from the newest snapshot, the reference set from the one it was drawn on.
+
+**Where this stands.** Reading the reference and pilot trials can begin. The part of this code that matters for sealed forecasts, the record of who opened which forecasts, is not yet used by anything: it will be exercised and reviewed when the reveal step (ticket 16) is built, as part of that ticket.

@@ -9,7 +9,7 @@ import pytest
 from registry_records import study
 from study_records import adjudicated, both_adjudicated, candidate
 from trialforecast import records, scoring
-from trialforecast.adjudication import AdjudicationLog, NothingFound, awaiting_result, results
+from trialforecast.adjudication import AdjudicationLog, Dissent, NothingFound, awaiting_result, results
 from trialforecast.reference import (
     NotFrozen, adjudication_sample, base_rate_forecaster, base_rate_table, frozen_base_rates, hazard_ratio_table, main,
     reference_trials, trace_accuracy,
@@ -322,7 +322,7 @@ def test_base_rates_are_frozen_once_and_only_when_fit_to_be(study_dir, capsys):
     assert figures["adjudicated"] == 40 and figures["trace_accuracy"]["outcome_matched"] == 40
     assert sorted(name for name, digest in figures["made_from"].items() if digest) == [
         "adjudication/reference/adjudications.jsonl", "adjudication/reference/sample.json",
-        "data/readout_trace/rechecks.csv", "data/readout_trace/trace_A.csv"]
+        "data/readout_trace/rechecks.csv", "data/readout_trace/trace_A.csv", "design rulings on the trials the figures count"]
     forecaster = base_rate_forecaster(study_dir)
     forecast = forecaster.forecast(candidate("NCT9999"), TODAY)
     assert forecast.probability_positive == pytest.approx(20 / 30) and forecaster.version == "frozen 2026-10-09"
@@ -336,7 +336,7 @@ def test_base_rates_are_frozen_once_and_only_when_fit_to_be(study_dir, capsys):
 
 @pytest.mark.parametrize("appearing", ["adjudication/reference/nothing_found.jsonl", "adjudication/reference/withdrawals.jsonl",
                                        "adjudication/reference/dissents.jsonl", "data/readout_trace/rechecks_2.csv",
-                                       "data/readout_trace/trace_Z.csv", "screening/design_reviews.jsonl"])
+                                       "data/readout_trace/trace_Z.csv"])
 def test_a_file_the_figures_would_rest_on_that_appears_after_the_freeze_is_noticed(study_dir, appearing):
     recheck_the_doubtful_trace(study_dir)
     run(study_dir, "sample")
@@ -359,7 +359,7 @@ def test_a_sample_drawn_from_fewer_trials_does_not_stand_for_the_reference_set(s
     (traces / "trace_B.csv").write_text(HEADER + last)             # traced after the sample was drawn
     capsys.readouterr()
     assert run(study_dir, "freeze") == 1
-    assert "1 trial joined the reference set after the sample was drawn on 2026-10-09" in capsys.readouterr().out
+    assert "1 trial traced after the sample was drawn on 2026-10-09 have not been settled by both adjudicators" in capsys.readouterr().out
     (traces / "trace_B.csv").unlink()
     assert run(study_dir, "freeze") == 0
 
@@ -492,6 +492,120 @@ def test_a_design_ruling_on_a_trial_with_no_readout_does_not_touch_the_reference
     records.append(study_dir / "screening" / "design_reviews.jsonl",
                    DesignReview("NCT0054", "exclude", "a non-inferiority design", "Study Lead", TODAY))
     assert run(study_dir, "freeze") == 0
+
+
+def test_trials_traced_after_the_draw_join_once_both_adjudicators_have_settled_them(study_dir, capsys):
+    traces = study_dir / "data" / "readout_trace"
+    rows = (traces / "trace_A.csv").read_text().splitlines(keepends=True)
+    later = [row for row in rows if row.startswith(("NCT0052", "NCT0053", "NCT0054"))]
+    (traces / "trace_A.csv").write_text("".join(row for row in rows if row not in later))        # 21 non-industry results
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    sampled = drawn_sample(study_dir)["trials"]
+    lost = [nct for nct in sampled if int(nct[3:]) > 30][:2]
+    adjudicate(study_dir, [nct for nct in sampled if nct not in lost])
+    both_found_nothing(study_dir, lost)
+    capsys.readouterr()
+    # The adjudicators' own findings have left one sponsor type with too few results to freeze. More are traced.
+    assert run(study_dir, "freeze") == 1 and "non_industry trials have 19 clear results" in capsys.readouterr().out
+    (traces / "trace_B.csv").write_text(HEADER + "".join(later))
+    assert run(study_dir, "freeze") == 1
+    assert "3 trials traced after the sample was drawn on 2026-10-09 have not been settled by both adjudicators" in capsys.readouterr().out
+    # They were not there to be sampled, so the trace of them is not vouched for: the adjudicators read each one.
+    assert run(study_dir, "sample") == 0
+    listed = (study_dir / "adjudication" / "reference" / "worklist.csv").read_text()
+    assert all(nct in listed for nct in ("NCT0052", "NCT0053", "NCT0054")) and drawn_sample(study_dir)["trials"] == sampled
+    adjudicate(study_dir, ["NCT0052", "NCT0053"])
+    assert run(study_dir, "freeze") == 1 and "1 trial traced after" in capsys.readouterr().out
+    adjudicate(study_dir, ["NCT0054"])
+    assert run(study_dir, "freeze") == 0
+    # A trial traced afterwards with no readout is in no figure and needs nobody's reading.
+    figures = json.loads((study_dir / "study" / "base_rates.json").read_text())
+    assert figures["adjudicated"] == 43
+
+
+def test_a_trace_with_no_readout_added_after_the_draw_does_not_stop_the_freeze(study_dir):
+    traces = study_dir / "data" / "readout_trace"
+    rows = (traces / "trace_A.csv").read_text().splitlines(keepends=True)
+    (traces / "trace_A.csv").write_text("".join(row for row in rows if not row.startswith("NCT0054")))
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    adjudicate(study_dir, drawn_sample(study_dir)["trials"])
+    (traces / "trace_B.csv").write_text(HEADER + "NCT0054,no,,,,,,high\n")
+    assert run(study_dir, "freeze") == 0
+
+
+def test_rulings_on_other_candidates_after_the_freeze_do_not_unsettle_the_frozen_figures(study_dir):
+    traces = study_dir / "data" / "readout_trace" / "trace_A.csv"
+    traces.write_text(traces.read_text().replace("NCT0054,yes,2025-03-01,not_met,OS,0.7,2025-03-01,high", "NCT0054,no,,,,,,high"))
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    adjudicate(study_dir, drawn_sample(study_dir)["trials"])
+    assert run(study_dir, "freeze") == 0
+    # Screening goes on after the freeze: candidates still to read out are ruled on every month.
+    for nct in ("NCT0054", "NCT9001"):
+        records.append(study_dir / "screening" / "design_reviews.jsonl",
+                       DesignReview(nct, "exclude", "a non-inferiority design", "Study Lead", TODAY))
+    assert base_rate_forecaster(study_dir).version == "frozen 2026-10-09"
+    # A ruling on a trial the figures count is another matter.
+    records.append(study_dir / "screening" / "design_reviews.jsonl",
+                   DesignReview("NCT0001", "exclude", "a non-inferiority design", "Study Lead", TODAY))
+    with pytest.raises(ValueError, match="have since changed, gone or appeared: design rulings on the trials the figures count"):
+        base_rate_forecaster(study_dir)
+
+
+def test_the_sample_is_not_drawn_again_once_an_adjudicator_has_recorded_a_search_that_found_nothing(study_dir, capsys):
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    records.append(study_dir / "adjudication" / "reference" / "nothing_found.jsonl",
+                   NothingFound(nct="NCT0001", adjudicator="first", searched="PubMed", recorded_on=TODAY))
+    (study_dir / "adjudication" / "reference" / "sample.json").unlink()
+    assert run(study_dir, "sample") == 1 and "the adjudicators have begun" in capsys.readouterr().out
+
+
+def test_a_trial_with_no_readout_at_the_draw_cannot_be_re_checked_into_the_figures(study_dir, capsys):
+    traces = study_dir / "data" / "readout_trace" / "trace_A.csv"
+    traces.write_text(traces.read_text().replace("NCT0054,yes,2025-03-01,not_met,OS,0.7,2025-03-01,high", "NCT0054,no,,,,,,high"))
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    adjudicate(study_dir, drawn_sample(study_dir)["trials"])
+    (study_dir / "data" / "readout_trace" / "rechecks_2.csv").write_text(HEADER + "NCT0054,yes,2025-03-01,met,OS,0.7,2025-03-01,high\n")
+    capsys.readouterr()
+    assert run(study_dir, "freeze") == 1
+    assert "1 trial have been traced or re-checked differently since the sample was drawn" in capsys.readouterr().out
+
+
+def test_a_design_ruling_on_a_trial_in_doubt_at_the_draw_stops_the_freeze(study_dir, capsys):
+    trace(study_dir / "data" / "readout_trace", ["NCT0030,yes,2025-03-01,mixed,OS,,,high"], name="rechecks.csv")
+    run(study_dir, "sample")
+    assert drawn_sample(study_dir)["in_doubt"] == ["NCT0030"]
+    adjudicate(study_dir, drawn_sample(study_dir)["trials"])
+    records.append(study_dir / "screening" / "design_reviews.jsonl",
+                   DesignReview("NCT0030", "exclude", "a platform trial", "Study Lead", TODAY))
+    capsys.readouterr()
+    assert run(study_dir, "freeze") == 1
+    assert "a design ruling was made after the sample was drawn on 2026-10-09 for 1 trial: NCT0030" in capsys.readouterr().out
+
+
+def test_every_trial_is_listed_only_once_the_sample_itself_is_settled(study_dir, capsys):
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    sampled = drawn_sample(study_dir)["trials"]
+    adjudicate(study_dir, sampled[:-1], contradicting=sampled[:5])          # one sampled trial is still unread
+    assert run(study_dir, "sample") == 0
+    assert len((study_dir / "adjudication" / "reference" / "worklist.csv").read_text().splitlines()) == 41
+
+
+def test_the_report_counts_apart_a_source_one_adjudicator_dissented_from(study_dir):
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    log = study_dir / "adjudication" / "reference"
+    records.append(log / "adjudications.jsonl", adjudicated("NCT0001", "first", "positive", readout=dt.date(2025, 3, 1), recorded_on=TODAY))
+    records.append(log / "dissents.jsonl", Dissent(nct="NCT0001", adjudicator="second", source_type="press_release_or_filing",
+                                                   source="https://example.test/topline", reason="another trial", recorded_on=TODAY))
+    assert run(study_dir, "report") == 0
+    text = (study_dir / "results" / "reference_set" / "report.md").read_text()
+    assert "Counted apart, as not read independently: 1 source one of them found not to state the result" in text
 
 
 def test_the_reference_set_keeps_to_the_registry_snapshot_it_was_drawn_on(study_dir, capsys):

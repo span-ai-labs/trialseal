@@ -1,6 +1,6 @@
 # Reference set and base rates
 
-Written 2026-10-09. 382 past trials traced.
+Written 2026-10-10. 382 past trials traced.
 
 **These figures are provisional.** 0 of the 382 trials are adjudicated by both adjudicators; the others rest on one reader's trace. They are frozen only at registration.
 

@@ -549,6 +549,29 @@ def _reconcilable(state: SourceState | None) -> bool:
     return state is not None and state.disputed and len(state.readings) == 2
 
 
+def _settlement(row: dict, adjudicators: Iterable[str], recorded_on: dt.date) -> Reconciliation:
+    """A row of the list of disagreements as the reconciliation its settled cells make."""
+    hazard_ratio = _hazard_ratio(row["settled_hazard_ratio"])
+    if hazard_ratio is None and row["settled_hazard_ratio_endpoint"]:
+        raise ValueError("an endpoint is named for a hazard ratio that is left blank; give the number, or clear the "
+                         "endpoint if the source gives no hazard ratio")
+    return Reconciliation(
+        nct=row["nct"], source_type=row["source_type"], source=row["source"],
+        outcome=_one_of(row["settled_outcome"].casefold(), OUTCOMES, "the settled outcome"), hazard_ratio=hazard_ratio,
+        hazard_ratio_endpoint=row["settled_hazard_ratio_endpoint"] or None,
+        disclosed_on=_date(row["settled_disclosed_on"]), reason=row["reason"], adjudicators=tuple(adjudicators),
+        recorded_on=recorded_on, language=row["settled_language"] or None,
+    )
+
+
+def _is_what_was_recorded(row: dict, recorded: Reconciliation | None) -> bool:
+    """Whether a row's settled cells are the reconciliation the log already holds for its source."""
+    try:
+        return recorded is not None and _settlement(row, recorded.adjudicators, recorded.recorded_on) == recorded
+    except ValueError:
+        return False
+
+
 def disagreements(study: _Study, reopen: Iterable[str] = ()) -> int:
     """Lay the two readings of every source read differently side by side, with cells for what the pair settle on.
 
@@ -556,8 +579,8 @@ def disagreements(study: _Study, reopen: Iterable[str] = ()) -> int:
     readings are not shown to either until both have read everything cited. A
     source that one read and the other dissents from cannot be reconciled,
     having one reading; it is named, for the two to resolve. A settlement
-    already typed is kept if the readings it was typed against still stand, and
-    dropped, with a word to say so, if they have changed. Trials named to be
+    typed and not yet recorded is kept if the readings it was typed against
+    still stand, and dropped, with a word to say so, if they have changed. Trials named to be
     reopened have their reconciled sources listed again, to put a slip right.
     """
     path, (read_differently, dissented) = _disagreements_path(study), _laid_open(study)
@@ -568,8 +591,8 @@ def disagreements(study: _Study, reopen: Iterable[str] = ()) -> int:
         for _, row in _rows(path, DISAGREEMENT_COLUMNS, "a list of disagreements"):
             key = (row["nct"], row["source_type"], row["source"])
             state = study.sources.get(key)
-            if not _filled(row, SETTLED) or (state is not None and state.reconciliation is not None and key not in listed):
-                continue  # nothing typed, or typed and since recorded
+            if not _filled(row, SETTLED) or (key not in listed and _is_what_was_recorded(row, state and state.reconciliation)):
+                continue  # nothing typed, or typed and since recorded just so
             if _reconcilable(state) and row[AS_LISTED] == _as_listed(state):
                 typed[key] = [row[cell] for cell in SETTLED]
                 listed.setdefault(key, state)  # shown to them before; kept though its trial has since gained a source
@@ -609,17 +632,7 @@ def reconcile(study: _Study, adjudicators: list[str], revise: bool) -> int:
     def reconciliation(row: dict) -> Reconciliation | None:
         nonlocal log
         key = (row["nct"], row["source_type"], row["source"])
-        hazard_ratio = _hazard_ratio(row["settled_hazard_ratio"])
-        if hazard_ratio is None and row["settled_hazard_ratio_endpoint"]:
-            raise ValueError("an endpoint is named for a hazard ratio that is left blank; give the number, or clear the "
-                             "endpoint if the source gives no hazard ratio")
-        settled = Reconciliation(
-            nct=row["nct"], source_type=row["source_type"], source=row["source"],
-            outcome=_one_of(row["settled_outcome"].casefold(), OUTCOMES, "the settled outcome"), hazard_ratio=hazard_ratio,
-            hazard_ratio_endpoint=row["settled_hazard_ratio_endpoint"] or None,
-            disclosed_on=_date(row["settled_disclosed_on"]), reason=row["reason"], adjudicators=tuple(adjudicators),
-            recorded_on=study.today, language=row["settled_language"] or None,
-        )
+        settled = _settlement(row, adjudicators, study.today)
         if key in seen:
             raise ValueError("the same source is settled twice in this file")
         seen.add(key)
