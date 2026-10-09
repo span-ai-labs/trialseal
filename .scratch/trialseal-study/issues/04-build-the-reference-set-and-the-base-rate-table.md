@@ -92,3 +92,16 @@
 
 **Method notes from tranche F.** For academic trials, Crossref title scans on the drug or intervention name found disclosures that neither the registry number, PubMed, Europe PMC nor web search did, because abstracts rename trials and omit registry numbers. Congress abstract dates taken from Crossref are index dates and can be up to a week late. Six registry records in ten were stale. The tracers listed further designs for exclusion review that the tag had not caught (fixed-time survival rates, factorial and multi-randomisation designs, a platform trial); those are in the `trace_F*_notes.md` files.
 
+**2026-10-09, rulings made, sponsor types corrected, sample drawn.** The study lead said to go with every recommendation above.
+
+- **Design rulings** (`screening/design_rulings_2026-10-09b.csv`): the four traced non-inferiority designs are excluded, and so are the two candidates that are not cancer trials (NCT04047628, NCT03654053). The two trials in people who do not yet have cancer (NCT07609901, NCT06950385) are still his to rule on; neither is traced.
+- **Sponsor corrections** (ADR-0016): ten companies the registry classes as "other" are industry-led. A wider read of sponsor names found ten, not the five first named. The list is `COMPANIES_THE_REGISTRY_CLASSES_OTHERWISE` in `universe.py`.
+- **Tranche G**: the correction moved four untraced trials into the industry-led pool of the two years, which is traced in full, so they were traced (`trace_G.csv`) before the sample was drawn. The draw recipes for tranches E and F above reproduce at commit `2c618bd`, before the correction; after it the pool of trials that are not industry-led is smaller.
+- **The sample is drawn** (`adjudication/reference/sample.json`: 40 trials, seed 20261009, from the 213 traced as read out or void). `adjudication/reference/worklist.csv` lists 46 trials for both adjudicators: the 40 and the six the trace left in doubt, without saying which are which.
+
+**Figures now** (382 traced, provisional): 127 positive, 63 negative, 23 void, 158 with no readout found, 6 in doubt, 5 left out for their design. Industry-led 69.0% (116 of 168; overall survival 18 of 41, progression-type 98 of 126), 111 hazard ratios. Not industry-led 50.0% (11 of 22, 95% interval 30.7% to 69.3%), 17 hazard ratios.
+
+**What is left: the adjudicators' readings, then the freeze.** `trialseal-reference freeze` now refuses for one reason only, the six trials in doubt; once both adjudicators have read the 46 it will also check that the trace matched them on nine in ten. Readings go in `adjudication/reference/adjudications.jsonl`. No trace may be added or re-checked from here on without redrawing the sample: a trial that joins the reference set after the draw makes the freeze refuse.
+
+**Known limit.** The tool that records an adjudicator's reading (ticket 05's rules behind a command or form) is not built: readings can be recorded only through `record_adjudication` in code. That is the next thing the adjudicators need.
+

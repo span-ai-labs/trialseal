@@ -374,7 +374,9 @@ def sample(study: _Study) -> int:
 
     It is drawn only when no trace still awaits a re-check, and it records the
     trials it was drawn from, so that a sample of an earlier, smaller set cannot
-    later stand for the whole.
+    later stand for the whole. The list the adjudicators are given also holds
+    the trials the trace left in doubt, which only they can settle; it does not
+    say which those are.
     """
     drawn = _drawn(study.root)
     if drawn is None:
@@ -385,11 +387,12 @@ def sample(study: _Study) -> int:
                  "drawn_from": _to_read(study.traced)}
         (study.root / SAMPLE).parent.mkdir(parents=True, exist_ok=True)
         (study.root / SAMPLE).write_text(json.dumps(drawn, indent=2) + "\n", encoding="utf-8")
+    to_read = sorted({*drawn["trials"], *(t.nct for t in study.traced if t.place == IN_DOUBT)})
     worklist = study.root / REFERENCE_ADJUDICATION / "worklist.csv"
     write_table(worklist, ("nct", "acronym", "title", "scored_endpoint"),
                 [(nct, study.candidates[nct].get("acronym"), study.candidates[nct].get("brief_title"),
-                  study.candidates[nct]["scored_endpoint"]) for nct in drawn["trials"]])
-    print(f"{counted(len(drawn['trials']), 'trial')} for both adjudicators, listed in {worklist}; "
+                  study.candidates[nct]["scored_endpoint"]) for nct in to_read])
+    print(f"{counted(len(to_read), 'trial')} for both adjudicators, listed in {worklist}; "
           f"the draw is kept in {study.root / SAMPLE}")
     return 0
 

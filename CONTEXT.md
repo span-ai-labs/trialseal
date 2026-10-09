@@ -89,7 +89,7 @@ One of overall survival, progression-type (any endpoint counting disease progres
 _Avoid_: Endpoint kind, endpoint category
 
 **Sponsor type**:
-Industry-led or not, taken from the lead sponsor.
+Industry-led or not, taken from the registry's class for the lead sponsor, except for a published list of companies the registry classes otherwise (ADR-0016).
 _Avoid_: Sponsor class, funder type
 
 **Reference class**:

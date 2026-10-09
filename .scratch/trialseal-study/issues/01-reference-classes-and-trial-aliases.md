@@ -28,3 +28,6 @@ Left for later tickets:
 - Title-derived trial names are unverified and include disease abbreviations ("NSCLC"); they are held apart from the registry acronym. Ticket 12 measures matching quality.
 - The candidate filter itself misses a few spellings ("All cause mortality" with a space). Widening it would change candidate counts, so it was left; ticket 03's hand review is the place to catch them.
 - One registry record labels a response endpoint "(OS)" and is classed as overall survival (NCT06953999).
+
+**2026-10-09, from ticket 04.** Tracing surfaced two faults in the candidate universe. (1) The registry classes some companies as "other"; ten are now corrected to industry-led by a published list (ADR-0016). The list was found by reading sponsor names that look like company names, so a company whose name does not will have been missed. (2) A time-to-event endpoint worded like a cancer one lets a few trials through that are not cancer trials. Two are excluded by design ruling; a word search of conditions and titles is the only check so far, and the universe has no test that a candidate is a cancer trial.
+

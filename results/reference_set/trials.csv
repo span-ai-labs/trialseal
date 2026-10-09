@@ -6,7 +6,7 @@ NCT01917552,non_industry/progression,unresolved,,,trace_E1,True,False
 NCT01954992,industry/overall_survival,unresolved,,,trace_A,False,False
 NCT02062489,non_industry/progression,unresolved,,,trace_E2,True,False
 NCT02106572,industry/progression,void,,,trace_C2,False,False
-NCT02166788,non_industry/progression,awaiting_design_review,,,trace_F3,False,False
+NCT02166788,non_industry/progression,excluded_design,,,trace_F3,False,False
 NCT02416388,non_industry/overall_survival,in_doubt,2023-11-02,,trace_F2,False,False
 NCT02429700,non_industry/progression,unresolved,,,trace_F2,False,False
 NCT02455245,non_industry/progression,negative,2024-06-18,,trace_F3,False,False
@@ -37,7 +37,7 @@ NCT03371017,industry/overall_survival,negative,2024-05-15,0.93,trace_D2,False,Fa
 NCT03377491,industry/overall_survival,positive,2024-12-02,0.819,trace_A,False,False
 NCT03383458,industry/progression,unresolved,,,trace_C2,False,False
 NCT03391934,industry/progression,unresolved,,,trace_D3,True,False
-NCT03399110,non_industry/progression,awaiting_design_review,,,trace_E2,False,False
+NCT03399110,non_industry/progression,excluded_design,,,trace_E2,False,False
 NCT03409614,industry/overall_survival,positive,2021-08-05,0.71,trace_D2,False,False
 NCT03428477,non_industry/progression,unresolved,,,trace_F1,False,False
 NCT03456063,industry/progression,negative,2026-01-29,,trace_C1,True,False
@@ -68,7 +68,7 @@ NCT03867084,industry/progression,negative,2025-07-29,1.06,trace_D6,False,False
 NCT03867175,non_industry/progression,void,,,trace_F1,False,False
 NCT03899636,industry/overall_survival,unresolved,,,trace_D2,False,False
 NCT03912415,industry/overall_survival,unresolved,,,trace_D2,True,False
-NCT03924050,non_industry/overall_survival,unresolved,,,trace_E1,False,False
+NCT03924050,industry/overall_survival,unresolved,,,trace_E1,False,False
 NCT03924856,industry/progression,negative,2026-04-30,,trace_C2,False,False
 NCT03924895,industry/progression,positive,2025-08-12,0.4,trace_D1,False,False
 NCT03926091,non_industry/progression,unresolved,,,trace_E1,False,False
@@ -78,11 +78,11 @@ NCT03997123,industry/overall_survival,negative,2024-06-18,0.92,trace_B,True,Fals
 NCT04002297,industry/progression,positive,2026-06-30,0.57,trace_A,False,False
 NCT04027309,non_industry/overall_survival,negative,2026-03-09,1.02,trace_F3,False,False
 NCT04039607,industry/overall_survival,positive,2024-03-20,0.79,trace_C1,False,False
-NCT04047628,non_industry/progression,unresolved,,,trace_F1,False,False
-NCT04085276,non_industry/progression,positive,2023-02-20,0.653,trace_E1,False,False
+NCT04047628,non_industry/progression,excluded_design,,,trace_F1,False,False
+NCT04085276,industry/progression,positive,2023-02-20,0.653,trace_E1,False,False
 NCT04114981,non_industry/progression,positive,2026-09-28,0.53,trace_E2,False,False
 NCT04135781,non_industry/progression,unresolved,,,trace_F1,False,False
-NCT04158440,non_industry/progression,positive,2023-01-17,0.4,trace_E2,False,False
+NCT04158440,industry/progression,positive,2023-01-17,0.4,trace_E2,False,False
 NCT04161885,industry/overall_survival,void,,,trace_B,False,False
 NCT04165317,industry/progression,positive,2025-01-10,0.68,trace_D5,False,False
 NCT04182204,industry/overall_survival,positive,2025-06-14,0.6,trace_B,True,False
@@ -150,6 +150,7 @@ NCT04762459,non_industry/progression,unresolved,,,trace_F1,False,False
 NCT04765059,industry/progression,in_doubt,2025-09-06,,trace_D3,True,False
 NCT04793932,non_industry/progression,positive,2025-06-01,0.64,trace_E1,False,False
 NCT04793958,industry/overall_survival,negative,2026-04-30,,trace_C2,False,False
+NCT04797884,industry/overall_survival,unresolved,,,trace_G,False,False
 NCT04819100,industry/progression,positive,2026-02-16,0.17,trace_C1,False,False
 NCT04821622,industry/progression,positive,2026-03-19,,trace_C2,False,False
 NCT04824092,industry/progression,positive,2026-01-05,0.75,trace_D6,False,False
@@ -164,7 +165,7 @@ NCT04880746,non_industry/progression,unresolved,,,trace_E2,True,False
 NCT04884360,industry/progression,unresolved,,,trace_D5,True,False
 NCT04895358,industry/progression,unresolved,,,trace_C1,False,False
 NCT04906993,industry/progression,positive,2025-09-30,0.68,trace_D2,False,False
-NCT04909684,non_industry/overall_survival,awaiting_design_review,,,trace_F2,False,False
+NCT04909684,non_industry/overall_survival,excluded_design,,,trace_F2,False,False
 NCT04914598,industry/other_time_to_event,negative,2026-07-01,,trace_D6,True,False
 NCT04921527,industry/progression,positive,2026-05-29,0.427,trace_D2,False,False
 NCT04940052,industry/progression,positive,2025-10-22,0.38,trace_D3,False,False
@@ -272,7 +273,7 @@ NCT05654623,industry/progression,positive,2025-03-11,0.58,trace_D5,False,False
 NCT05668988,industry/progression,positive,2026-03-21,0.65,trace_A,True,False
 NCT05673512,industry/progression,unresolved,,,trace_D3,False,False
 NCT05673590,industry/overall_survival,unresolved,,,trace_D4,False,False
-NCT05674305,non_industry/progression,awaiting_design_review,,,trace_F1,False,False
+NCT05674305,non_industry/progression,excluded_design,,,trace_F1,False,False
 NCT05674539,non_industry/progression,unresolved,,,trace_E2,True,False
 NCT05675319,non_industry/overall_survival,void,,,trace_F2,False,False
 NCT05701436,non_industry/progression,unresolved,,,trace_E2,True,False
@@ -305,6 +306,7 @@ NCT05919381,industry/overall_survival,positive,2026-07-22,,trace_D1,False,False
 NCT05922345,industry/overall_survival,unresolved,,,trace_D1,False,False
 NCT05943795,industry/overall_survival,unresolved,,,trace_D1,False,False
 NCT05945901,industry/progression,unresolved,,,trace_D4,False,False
+NCT05978050,industry/overall_survival,unresolved,,,trace_G,False,False
 NCT05990127,industry/overall_survival,unresolved,,,trace_A,False,False
 NCT05994339,non_industry/overall_survival,unresolved,,,trace_E2,True,False
 NCT06012435,industry/overall_survival,negative,2026-06-22,,trace_C2,False,False
@@ -323,13 +325,13 @@ NCT06122389,industry/progression,unresolved,,,trace_D6,False,False
 NCT06123884,industry/progression,unresolved,,,trace_B,False,False
 NCT06143553,industry/progression,unresolved,,,trace_D1,False,False
 NCT06152575,industry/progression,unresolved,,,trace_D4,False,False
-NCT06170489,non_industry/progression,unresolved,,,trace_E1,False,False
+NCT06170489,industry/progression,unresolved,,,trace_E1,False,False
 NCT06182592,industry/overall_survival,unresolved,,,trace_D6,True,False
 NCT06196736,industry/progression,unresolved,,,trace_A,False,False
 NCT06199973,industry/progression,positive,2026-02-10,0.33,trace_D6,False,False
 NCT06208150,industry/progression,positive,2026-07-23,0.11,trace_C1,False,False
 NCT06241755,industry/progression,unresolved,,,trace_D6,True,False
-NCT06254599,non_industry/progression,unresolved,,,trace_E1,False,False
+NCT06254599,industry/progression,unresolved,,,trace_E1,False,False
 NCT06265428,industry/progression,positive,2025-09-05,,trace_D1,False,False
 NCT06279364,industry/overall_survival,positive,2026-05-21,,trace_D2,False,False
 NCT06295809,industry/progression,void,,,trace_A,False,False
@@ -351,7 +353,7 @@ NCT06417008,industry/progression,unresolved,,,trace_A,False,False
 NCT06417814,industry/progression,unresolved,,,trace_D4,False,False
 NCT06430437,industry/progression,unresolved,,,trace_D2,True,False
 NCT06441565,non_industry/progression,unresolved,,,trace_E1,True,False
-NCT06465446,non_industry/progression,unresolved,,,trace_F3,False,False
+NCT06465446,industry/progression,unresolved,,,trace_F3,False,False
 NCT06469879,industry/progression,unresolved,,,trace_B,True,False
 NCT06485466,non_industry/progression,unresolved,,,trace_E1,True,False
 NCT06492941,industry/overall_survival,unresolved,,,trace_D3,False,False
@@ -365,11 +367,13 @@ NCT06591520,industry/overall_survival,positive,2026-08-26,,trace_D3,False,False
 NCT06618664,industry/progression,unresolved,,,trace_D4,False,False
 NCT06619236,industry/progression,unresolved,,,trace_C2,False,False
 NCT06625320,industry/progression,positive,2026-04-13,0.4,trace_D2,False,False
+NCT06647862,industry/overall_survival,unresolved,,,trace_G,False,False
 NCT06664983,non_industry/progression,positive,2026-05-27,0.47,trace_E2,True,False
 NCT06735391,industry/progression,unresolved,,,trace_A,False,False
 NCT06738251,industry/progression,unresolved,,,trace_D3,False,False
 NCT06759857,industry/progression,positive,2026-07-02,0.7,trace_D4,True,False
 NCT06780930,industry/progression,unresolved,,,trace_C2,False,False
+NCT06781073,industry/overall_survival,negative,2025-05-28,0.72,trace_G,False,False
 NCT06790966,industry/overall_survival,void,,,trace_C1,False,False
 NCT06927986,industry/progression,positive,2026-08-26,,trace_D1,False,False
 NCT06929325,industry/progression,unresolved,,,trace_D5,False,False

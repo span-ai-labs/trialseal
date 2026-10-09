@@ -117,6 +117,25 @@ def test_reference_class_combines_sponsor_type_and_endpoint_type():
     assert unknown["sponsor_type"] is None and unknown["reference_class"] is None
 
 
+def test_a_company_the_registry_classes_as_other_is_industry_led():
+    def led_by(name, cls="OTHER"):
+        record = study("NCT5", "Overall survival", cls=cls)
+        record["protocolSection"]["sponsorCollaboratorsModule"]["leadSponsor"]["name"] = name
+        return u.flatten(record)
+
+    company = led_by("Shanghai Junshi Bioscience Co., Ltd.")
+    assert (company["sponsor_type"], company["reference_class"]) == ("industry", "industry/overall_survival")
+    assert company["sponsor_class"] == "OTHER"                       # what the registry said is kept beside it
+    # The same company however the registry spells it; and nobody else, whatever their name resembles.
+    assert led_by("SHANGHAI JUNSHI BIOSCIENCE CO.,LTD")["sponsor_type"] == "industry"
+    assert led_by("Shanghai Junshi Hospital")["sponsor_type"] == "non_industry"
+    assert led_by("Alliance Foundation Trials, LLC.")["sponsor_type"] == "non_industry"
+    # A correction only ever makes a sponsor industry-led, and an unknown class stays unknown.
+    assert led_by("Shanghai Junshi Bioscience Co., Ltd.", cls="INDUSTRY")["sponsor_type"] == "industry"
+    assert led_by("Shanghai Junshi Bioscience Co., Ltd.", cls=None)["sponsor_type"] == "industry"
+    assert led_by("Acme", cls=None)["sponsor_type"] is None
+
+
 def test_alias_record_collects_the_names_a_readout_may_be_announced_under():
     s = study("NCT00000001", "Progression-free survival")
     ps = s["protocolSection"]

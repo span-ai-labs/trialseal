@@ -286,6 +286,18 @@ def test_the_adjudicators_sample_is_drawn_once_and_shows_nothing_of_what_the_tra
     assert drawn_sample(study_dir) == drawn
 
 
+def test_the_adjudicators_are_also_given_the_trials_in_doubt_and_not_told_which_they_are(study_dir, capsys):
+    # The re-check of NCT0030 could not say whether the trial met its endpoint. Only the adjudicators can settle it.
+    trace(study_dir / "data" / "readout_trace", ["NCT0030,yes,2025-03-01,mixed,OS,,,high"], name="rechecks.csv")
+    assert run(study_dir, "sample") == 0
+    drawn = drawn_sample(study_dir)
+    assert "NCT0030" not in drawn["trials"] and len(drawn["trials"]) == 40          # it is no part of the random sample
+    listed = (study_dir / "adjudication" / "reference" / "worklist.csv").read_text().splitlines()
+    ncts = [line.split(",")[0] for line in listed[1:]]
+    assert ncts == sorted([*drawn["trials"], "NCT0030"]) and listed[0] == "nct,acronym,title,scored_endpoint"
+    assert "41 trials for both adjudicators" in capsys.readouterr().out
+
+
 def test_base_rates_are_frozen_once_and_only_when_fit_to_be(study_dir, capsys):
     frozen = study_dir / "study" / "base_rates.json"
 

@@ -1,10 +1,10 @@
 # Reference set and base rates
 
-Written 2026-10-09. 378 past trials traced.
+Written 2026-10-09. 382 past trials traced.
 
-**These figures are provisional.** 0 of the 378 trials are adjudicated by both adjudicators; the others rest on one reader's trace. They are frozen only at registration.
+**These figures are provisional.** 0 of the 382 trials are adjudicated by both adjudicators; the others rest on one reader's trace. They are frozen only at registration.
 
-Positive 127, negative 62, void 23, unresolved 156. Not yet counted: 6 in doubt, 0 trials await a re-check, 4 tagged for exclusion review with no ruling. Left out for their design: 0.
+Positive 127, negative 63, void 23, unresolved 158. Not yet counted: 6 in doubt, 0 trials await a re-check, 0 tagged for exclusion review with no ruling. Left out for their design: 5.
 
 ## Base rates
 
@@ -12,15 +12,15 @@ Trials with a clear result only. Void and unresolved trials are shown beside the
 
 | Reference class | Clear results | Positive | Base rate | 95% interval | Void | Unresolved | Not yet counted |
 |---|---|---|---|---|---|---|---|
-| industry/overall_survival | 40 | 18 | 45.0% | 30.7% to 60.2% | 4 | 29 | 0 |
-| industry/progression | 124 | 96 | 77.4% | 69.3% to 83.9% | 13 | 68 | 3 |
+| industry/overall_survival | 41 | 18 | 43.9% | 29.9% to 59.0% | 4 | 33 | 0 |
+| industry/progression | 126 | 98 | 77.8% | 69.8% to 84.2% | 13 | 71 | 3 |
 | industry/other_time_to_event | 1 | 0 | 0.0% | 0.0% to 79.3% | 0 | 0 | 0 |
-| non_industry/overall_survival | 9 | 2 | 22.2% | 6.3% to 54.7% | 1 | 14 | 3 |
-| non_industry/progression | 15 | 11 | 73.3% | 48.0% to 89.1% | 5 | 45 | 4 |
+| non_industry/overall_survival | 9 | 2 | 22.2% | 6.3% to 54.7% | 1 | 13 | 2 |
+| non_industry/progression | 13 | 9 | 69.2% | 42.4% to 87.3% | 5 | 41 | 1 |
 | non_industry/other_time_to_event | 0 | 0 |  |  | 0 | 0 | 0 |
-| industry | 165 | 114 | 69.1% | 61.7% to 75.6% | 17 | 97 | 3 |
-| non_industry | 24 | 13 | 54.2% | 35.1% to 72.1% | 6 | 59 | 7 |
-| all sponsors | 189 | 127 | 67.2% | 60.2% to 73.5% | 23 | 156 | 10 |
+| industry | 168 | 116 | 69.0% | 61.7% to 75.5% | 17 | 104 | 3 |
+| non_industry | 22 | 11 | 50.0% | 30.7% to 69.3% | 6 | 54 | 3 |
+| all sponsors | 190 | 127 | 66.8% | 59.9% to 73.1% | 23 | 158 | 6 |
 
 Published rates, for comparison. They are not used: each was assembled differently from the outcome scored here (ADR-0009).
 
@@ -36,15 +36,15 @@ The first hazard ratio reported for the scored endpoint, where it became public 
 
 | Reference class | Trials with a hazard ratio | Median | 10th centile | 90th centile |
 |---|---|---|---|---|
-| industry/overall_survival | 22 | 0.82 | 0.61 | 0.98 |
-| industry/progression | 86 | 0.60 | 0.27 | 0.87 |
+| industry/overall_survival | 23 | 0.82 | 0.61 | 0.98 |
+| industry/progression | 88 | 0.60 | 0.28 | 0.86 |
 | industry/other_time_to_event | 0 |  |  |  |
 | non_industry/overall_survival | 7 | 0.86 | 0.60 | 1.00 |
-| non_industry/progression | 12 | 0.62 | 0.47 | 0.86 |
+| non_industry/progression | 10 | 0.62 | 0.50 | 0.88 |
 | non_industry/other_time_to_event | 0 |  |  |  |
-| industry | 108 | 0.64 | 0.31 | 0.94 |
-| non_industry | 19 | 0.71 | 0.47 | 0.99 |
-| all sponsors | 127 | 0.65 | 0.34 | 0.96 |
+| industry | 111 | 0.64 | 0.32 | 0.93 |
+| non_industry | 17 | 0.74 | 0.49 | 0.99 |
+| all sponsors | 128 | 0.65 | 0.34 | 0.96 |
 
 ## Adjudication
 

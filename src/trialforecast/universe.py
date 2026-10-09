@@ -93,7 +93,35 @@ def scored_endpoint(primary_outcomes: list[dict]) -> tuple[str | None, str | Non
     return None, None
 
 
-def sponsor_type(sponsor_class: str | None) -> str | None:
+# Companies the registry classes as something other than industry (ADR-0016). Each develops or sells a drug or a
+# device for profit. The list is published with the protocol; a sponsor type is sealed with each batch, so a name
+# added later changes only batches sealed afterwards.
+COMPANIES_THE_REGISTRY_CLASSES_OTHERWISE = (
+    "Ahon Pharmaceutical Co., Ltd.",
+    "Biotech Pharmaceutical Co., Ltd.",
+    "ImmuneOnco Biopharmaceuticals (Shanghai) Inc.",
+    "S.LAB (SOLOWAYS)",
+    "Shanghai Junshi Bioscience Co., Ltd.",
+    "Shouyao Holdings (Beijing) Co. LTD",
+    "Steba Biotech S.A.",
+    "THERABIONIC INC.",
+    "WALA Heilmittel GmbH",
+    "Xi'an Xintong Pharmaceutical Research Co.,Ltd.",
+)
+
+
+def _name_key(name: str | None) -> str:
+    """A sponsor's name without case, spacing or punctuation, which the registry does not keep consistent."""
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+_COMPANIES = frozenset(_name_key(name) for name in COMPANIES_THE_REGISTRY_CLASSES_OTHERWISE)
+
+
+def sponsor_type(sponsor_class: str | None, lead_sponsor: str | None = None) -> str | None:
+    """Industry-led or not: the registry's class for the lead sponsor, except for the companies it classes otherwise."""
+    if _name_key(lead_sponsor) in _COMPANIES:
+        return "industry"
     if not sponsor_class or sponsor_class == "UNKNOWN":
         return None
     return "industry" if sponsor_class == "INDUSTRY" else "non_industry"
@@ -179,7 +207,7 @@ def flatten(study: dict) -> dict:
     )
     scored, scored_type = scored_endpoint(prim)
     sponsor_class = sponsor.get("leadSponsor", {}).get("class")
-    its_sponsor_type = sponsor_type(sponsor_class)
+    its_sponsor_type = sponsor_type(sponsor_class, sponsor.get("leadSponsor", {}).get("name"))
     return {
         "nct": ident.get("nctId"),
         "acronym": ident.get("acronym"),
