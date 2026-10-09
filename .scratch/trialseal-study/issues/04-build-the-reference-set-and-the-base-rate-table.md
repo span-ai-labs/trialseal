@@ -53,6 +53,23 @@
 - The frozen file records a SHA-256 of every trace, re-check, reference adjudication and design ruling it was made from. The base-rate forecaster refuses to load if any has changed.
 - A hazard ratio that is not a finite positive number is refused when a trace is read.
 
-8. *(rule, to confirm)* Nine in ten is my number for how often the trace must match the adjudicators before the unread traces are relied on. Below it, the adjudicators read every trace.
+8. *(confirmed by the study lead, 2026-10-09)* Nine in ten is the number for how often the trace must match the adjudicators before the unread traces are relied on. Below it, the adjudicators read every trace.
 
 **Known limit.** A traced hazard ratio is matched to the scored endpoint by type (overall survival, progression-type), not by the endpoint's exact words; the adjudicated ones are matched exactly.
+
+**2026-10-09, re-checks made.** All 81 trials of `recheck_worklist.csv` were looked at again, in six batches run three at a time (`recheck_sample_R1..R6.csv` in, `rechecks_R1..R6.csv` and their notes out; method in `data/readout_trace/RECHECK_BRIEF.md`). No batch ran out of web searches. 55 re-checks are of high confidence, 26 of medium, none of low, so no trace now awaits a re-check.
+
+- The finding is unchanged for 69 of the 81; what changed for them is that a real search now stands behind it.
+- Three trials went from not disclosed to disclosed; three from unclear to not disclosed; five kept a readout with a different result coding (mostly `unclear` or `mixed` resolved); two first-disclosure dates moved earlier, by about two weeks and by 26 days.
+- For the 12 trials where a model had given an earlier date than the trace, an earlier disclosure was found for one. For most of the others a dated sponsor document from shortly before the traced date still describes the result as awaited, so the trace stands and the model's date was not recall.
+
+**Figures now** (`results/reference_set/report.md`, still provisional, nothing adjudicated): 122 positive, 58 negative, 19 void, 135 with no readout found, 3 in doubt. Industry-led base rate 69.1% (114 of 165, 95% interval 61.7% to 75.6%); overall survival 45.0% (18 of 40), progression-type 77.4% (96 of 124). Not industry-led: 8 of 15.
+
+**What still stands between here and freezing.**
+
+1. Non-industry has 15 clear results; 20 are needed. About one traced non-industry trial in four has a clear result, so about 20 to 30 more should be traced. This comes before the sample: a trial that joins the reference set after the sample is drawn makes freezing refuse.
+2. Three trials are in doubt after the re-check (NCT03520686, NCT04765059, NCT05118776): the source reports the primary analysis without a clear met or not met. Both adjudicators must read them.
+3. One traced trial is tagged for exclusion review and has no design ruling (NCT03399110).
+4. Then the sample, the adjudicators' readings and the freeze, as above.
+
+**What the re-checks taught about the method.** Web search finds almost nothing for hospital-led trials and for small Chinese sponsors: it returns registry mirrors. What worked: the registry API; Crossref title searches on the drug name, which reach ASCO, ESMO and ASH abstracts; Europe PMC by registry number; the Hong Kong exchange's list of a company's announcements by date; cninfo for mainland-listed sponsors; the EU trial register's public API, which records early terminations that ClinicalTrials.gov still shows as recruiting. What stays out of reach: Chinese domestic meetings and journals (CSCO, CNKI, Wanfang), lapsed Hong Kong listing applications, and the exact release date of an ASCO abstract. A finding of nothing for a small unlisted sponsor is weaker than its label: such a sponsor can drop a trial without saying so. The batch notes list those rows for the adjudicators.

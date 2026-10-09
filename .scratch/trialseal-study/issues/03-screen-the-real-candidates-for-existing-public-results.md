@@ -37,7 +37,7 @@
 
 1. `results/screening/queue.csv`: 219 decisions of low or medium confidence. Mark `confirm` yes or no; a "no" on a report that a trial read out needs a `note`. Then `uv run trialseal-screening confirm results/screening/queue.csv --by "<your name>"`. Most are "eligible, medium" from light searches and are better re-searched than confirmed.
 2. `results/screening/design_queue.csv`: 130 candidates tagged for exclusion review. Each row shows a proposed ruling with a quote from the registry record (114 exclude, 10 include, 8 unsure). The tag turned out to be right far more often than expected. Fill in `decision` and `reason` yourself; a proposal is never taken as a ruling. Then `uv run trialseal-screening design results/screening/design_queue.csv --by "<your name>"`.
-3. One policy question the proposals raise: five registrations hold two trials under one number, one testing non-inferiority and one superiority. I recommend excluding them, since the registry cannot say which result a readout belongs to.
+3. One policy question the proposals raise: five registrations hold two trials under one number, one testing non-inferiority and one superiority. I recommend excluding them, since the registry cannot say which result a readout belongs to. **Decided 2026-10-09:** the study lead said to go with this. The five (NCT04513717, NCT05050084, NCT06493552, NCT07154069, NCT07340567) are recorded as excluded in `screening/design_reviews.jsonl`, from `screening/design_rulings_2026-10-09.csv`. The design queue is now 125.
 
 **Rules introduced here.** The study lead said on 2026-10-09 to go with all recommendations; these follow from that and belong in the protocol:
 
