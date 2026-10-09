@@ -73,3 +73,22 @@
 4. Then the sample, the adjudicators' readings and the freeze, as above.
 
 **What the re-checks taught about the method.** Web search finds almost nothing for hospital-led trials and for small Chinese sponsors: it returns registry mirrors. What worked: the registry API; Crossref title searches on the drug name, which reach ASCO, ESMO and ASH abstracts; Europe PMC by registry number; the Hong Kong exchange's list of a company's announcements by date; cninfo for mainland-listed sponsors; the EU trial register's public API, which records early terminations that ClinicalTrials.gov still shows as recruiting. What stays out of reach: Chinese domestic meetings and journals (CSCO, CNKI, Wanfang), lapsed Hong Kong listing applications, and the exact release date of an ASCO abstract. A finding of nothing for a small unlisted sponsor is weaker than its label: such a sponsor can drop a trial without saying so. The batch notes list those rows for the adjudicators.
+
+**2026-10-09, tranche F: 40 more trials that are not industry-led.** Drawn from the same pool as tranche E (the 305 trials of the two-year pool that are not industry-led, from `snapshots/2026-10-07T090006-wide` refined as of 2026-10-07). Tranche E was `random.Random(20261009).sample(sorted(pool), 56)`; I confirmed that reproduces the 56 traced. Tranche F is `random.Random(20261010).sample(sorted(untraced), 40)` from the 249 left, split by completion date into `sample_F1..F3.csv`. Traced three at a time under `TRACING_BRIEF.md` with the search rules of `RECHECK_BRIEF.md`; 32 rows of high confidence, 8 of medium, none of low.
+
+**Figures now** (378 traced, still provisional, nothing adjudicated): 127 positive, 62 negative, 23 void, 156 with no readout found, 6 in doubt, 4 awaiting a design ruling. Industry-led is unchanged at 69.1% (114 of 165). Not industry-led: 13 of 24 clear results (54.2%, 95% interval 35.1% to 72.1%) and 19 hazard ratios, so both sponsor types now have enough to freeze. Not industry-led by endpoint: overall survival 2 of 9, progression-type 11 of 15.
+
+**What stands between here and freezing, in order.**
+
+1. **Four design rulings on traced trials, before the sample is drawn.** NCT02166788, NCT03399110, NCT04909684, NCT05674305 are tagged for exclusion review; each is proposed for exclusion as a stated non-inferiority design (`screening/design_review_proposals.csv`). A ruling to include one after the draw would add a trial to the reference set and make freezing refuse, so they come first.
+2. **The sample**: `uv run trialseal-reference sample`.
+3. **Both adjudicators read** the 40 sampled trials and the six in doubt (NCT00268476, NCT02416388, NCT03520686, NCT04765059, NCT05118776, NCT05549037).
+4. **Freeze.**
+
+**Two faults in the candidate universe that the tracers surfaced.** Neither changes a figure above by much; both matter before the first sealing and belong to ticket 01.
+
+1. *Companies the registry classes as "other".* The sponsor type comes from the registry's sponsor class. It classes some companies as OTHER: 24 candidates led by five companies sit in the non-industry group, 15 of them Shanghai Junshi's. Five are traced, and two of those are positive results counted in the non-industry base rate. The primary comparison is on industry-led trials, so these would be left out of it wrongly. Recommended: a short list of sponsor corrections, fixed before the first sealing and published with the protocol.
+2. *Candidates that are not cancer trials.* A time-to-event endpoint worded like a cancer one lets a few through: at least NCT04047628 (multiple sclerosis) and NCT03654053 (cirrhosis), and three prevention or pre-cancer trials to look at (NCT07609901, NCT06950385, NCT06513065 is cancer). Recommended: exclude by design ruling, which already holds for any candidate.
+
+**Method notes from tranche F.** For academic trials, Crossref title scans on the drug or intervention name found disclosures that neither the registry number, PubMed, Europe PMC nor web search did, because abstracts rename trials and omit registry numbers. Congress abstract dates taken from Crossref are index dates and can be up to a week late. Six registry records in ten were stale. The tracers listed further designs for exclusion review that the tag had not caught (fixed-time survival rates, factorial and multi-randomisation designs, a platform trial); those are in the `trace_F*_notes.md` files.
+
