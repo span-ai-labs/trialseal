@@ -7,15 +7,16 @@
     form            write an adjudicator's form: a row for every source waiting for their reading
     record          record the filled rows of that form, all of them or none
     status          say where each trial stands
-    disagreements   lay the two readings of each source read differently side by side
+    disagreements   lay the two readings of each source read differently side by side, and name each dissent
     reconcile       record what the two settled for those sources, with their reason
     withdraw        take back a reading of a source cited by mistake
 
 An adjudicator's form gives the sources the other adjudicator has cited, with
 nothing of what was read in them, and a blank row for each trial nobody has
-read. A filled row becomes a reading dated the day it is recorded, or a finding
-of nothing where the adjudicator searched and found no source that states the
-trial's result.
+read. A filled row becomes a reading dated the day it is recorded; or a finding
+of nothing, where the adjudicator searched and found no source that states the
+trial's result; or a dissent, where they find that a source the other cited
+does not state it.
 
 The command cannot tell who is typing. That each adjudicator works alone, and
 that both are present for a reconciliation, rests on the two of them.
@@ -33,11 +34,12 @@ from dataclasses import dataclass
 from typing import Callable, Iterable
 
 from trialforecast.adjudication import (
-    EARLY_STOPS, ENDPOINT_RESULTS, ENDPOINT_RULES, LOG_KINDS, NOT_BLIND, NOTHING_FOUND, OUTCOMES,
-    SOURCE_TYPES, Adjudication, AdjudicationLog, NotBlind, NothingFound, Reconciliation, SourceState, Withdrawal,
-    awaiting_result, declined_sources, derive_outcome, entered_on, no_result_found, normalised_name, read_log, read_nothing_found,
-    record_adjudication, record_nothing_found, record_reconciliation, record_withdrawal, require_fits_the_log,
-    require_nothing_found_recordable, require_reconcilable, require_recordable, results, source_states, what_was_read,
+    EARLY_STOPS, ENDPOINT_RESULTS, ENDPOINT_RULES, LOG_KINDS, NOT_BLIND, NOTHING_FOUND, OUTCOMES, SOURCE_TYPES,
+    Adjudication, AdjudicationLog, Dissent, NotBlind, NothingFound, Reconciliation, SourceState, Withdrawal,
+    awaiting_result, derive_outcome, no_result_found, normalised_name, read_log, read_nothing_found, record_adjudication,
+    record_dissent, record_nothing_found, record_reconciliation, record_withdrawal, require_dissent_recordable,
+    require_fits_the_log, require_nothing_found_recordable, require_nothing_from_the_future, require_reconcilable,
+    require_recordable, results, source_states, what_was_read,
 )
 from trialforecast.reference import FROZEN
 from trialforecast.studyfiles import (
@@ -58,10 +60,11 @@ SETS = {
 
 ABOUT_THE_TRIAL = ("nct", "title", "scored_endpoint")
 WHAT_IS_READ = ("disclosed_on", "original_text", "translation", "endpoint_results", "early_stop", "hazard_ratio")
-SEARCHED = "nothing_found"  # where the adjudicator looked, when no source states the result
+SEARCHED = "nothing_found"  # where the adjudicator looked, or what a cited source holds instead of the result
+AS_GIVEN = "as_given"  # a mark on a row the command filled in with a source, to tell it from one the adjudicator typed
 FORM_COLUMNS = (*ABOUT_THE_TRIAL, "primary_outcomes", "source_type", "source", "disclosed_on", "language", "original_text",
                 "translation", "endpoint_rule", "endpoint_results", "early_stop", "hazard_ratio", "hazard_ratio_endpoint",
-                SEARCHED)
+                SEARCHED, AS_GIVEN)
 ONE_ADJUDICATORS_CELLS = ("adjudicator", "outcome", "disclosed_on", "hazard_ratio", "hazard_ratio_endpoint", "endpoint_rule",
                           "endpoint_results", "early_stop", "language", "original_text", "translation")
 AS_LISTED = "as_listed"  # a mark of the two readings a row was written from, to tell if either has changed since
@@ -118,12 +121,12 @@ class _Study:
 
     def found_nothing(self, nct: str) -> set[str]:
         """Who has searched for the trial and found nothing."""
-        return {finding.adjudicator for finding in self.nothing_found if finding.nct == nct and finding.about is None}
+        return {finding.adjudicator for finding in self.nothing_found if finding.nct == nct}
 
     @property
-    def declined(self) -> dict[SourceKey, tuple[str, ...]]:
-        """Sources one adjudicator has read and the other finds not to state the result."""
-        return declined_sources(self.nothing_found, self.log, self.today)
+    def dissented(self) -> dict[SourceKey, tuple[str, ...]]:
+        """Sources one adjudicator has read and the other finds not to state the result, and who finds so."""
+        return {key: tuple(sorted(state.dissents)) for key, state in self.sources.items() if state.dissents}
 
 
 def _file_name(adjudicator: str) -> str:
@@ -167,16 +170,12 @@ def _load(root: pathlib.Path, name: str, today: dt.date) -> _Study:
     log, nothing_found = read_log(root / log_dir), read_nothing_found(root / log_dir)
     trials = {row["nct"]: row for row in listed}
     # A trial leaves its worklist once it is settled. The adjudicators must still be able to come back to it.
-    left = sorted({entry.nct for entry in (*log.adjudications, *nothing_found)} - set(trials))
+    left = sorted({entry.nct for entry in (*log.adjudications, *log.dissents, *nothing_found)} - set(trials))
     registry = _registry(root) if left else {}
     for nct in left:
         trials[nct] = {"nct": nct, "title": registry.get(nct, {}).get("brief_title") or "",
                        "scored_endpoint": registry.get(nct, {}).get("scored_endpoint") or "", "left_the_worklist": "yes"}
-    entries = [*nothing_found, *(entry for kind in LOG_KINDS for entry in getattr(log, kind))]
-    latest = max((entered_on(entry) for entry in entries), default=today)
-    if latest > today:
-        # Every rule here is "as of today", so an entry from a later day would be quietly left out of all of them.
-        raise ValueError(f"the log holds an entry dated {latest}, after today ({today}): check this computer's date")
+    require_nothing_from_the_future([*nothing_found, *(entry for kind in LOG_KINDS for entry in getattr(log, kind))], today)
     return _Study(root, name, today, trials, _adjudicators(root), log, nothing_found, source_states(log, today))
 
 
@@ -271,6 +270,8 @@ def _address_key(source: str) -> str:
     fragment that is a place on the page. It catches slips, not evasions.
     """
     host, _, rest = re.sub(r"^https?://", "", source.strip(), flags=re.IGNORECASE).partition("/")
+    if host.casefold().startswith("doi:") or host.casefold() in ("doi.org", "dx.doi.org"):
+        return "doi:" + (host.casefold().removeprefix("doi:") + "/" + rest if host.casefold().startswith("doi:") else rest).casefold()
     path, _, fragment = rest.partition("#")
     if fragment.startswith(("/", "!")):  # a fragment some sites use as the page's own address
         path = f"{path}#{fragment}"
@@ -310,48 +311,79 @@ def _same_reading(one: Adjudication, other: Adjudication) -> bool:
     return (what_was_read(one), one.original_text, one.translation) == (what_was_read(other), other.original_text, other.translation)
 
 
-def _entries_of_form(study: _Study, adjudicator: str, path: pathlib.Path, revise: bool) -> list[Adjudication | NothingFound]:
-    """The readings and findings of nothing a form holds that the record does not, if every filled row can be recorded.
+def _given_mark(source_type: str, source: str) -> str:
+    return "g-" + hashlib.sha256(f"{source_type}\n{source}".encode()).hexdigest()[:8]
+
+
+def _typed_rows(study: _Study, rows: Iterable[tuple[int, dict]], path: pathlib.Path) -> dict[SourceKey, dict]:
+    """Rows on which the adjudicator typed a source and has not yet read it, by the source they name.
+
+    A row the command filled in carries its mark; once its source is no longer
+    cited it is simply dropped. A typed row for a trial that is not on the
+    worklist is a slip the adjudicator must put right, not one to drop.
+    """
+    typed = {}
+    for line, row in rows:
+        if not row["source"] or _filled(row, (*WHAT_IS_READ, SEARCHED)) or row[AS_GIVEN] == _given_mark(row["source_type"], row["source"]):
+            continue
+        if row["nct"] not in study.trials:
+            raise ValueError(f"{path}: row {line} gives a source for {row['nct']}, which is not on the worklist; "
+                             f"correct the registry number or remove the row")
+        typed[(row["nct"], row["source_type"], row["source"])] = row
+    return typed
+
+
+Entry = Adjudication | NothingFound | Dissent
+
+
+def _entries_of_form(study: _Study, adjudicator: str, path: pathlib.Path, revise: bool) -> list[Entry]:
+    """The readings, findings of nothing and dissents a form holds that the record does not, if every filled row can be recorded.
 
     A reading of a source the adjudicator has already read differently replaces
     the earlier one only when they say so; both stay in the log. A row with
-    `nothing_found` filled is a finding of nothing: about the trial if the row
-    names no source, and about that one source if it names one.
+    `nothing_found` filled is a finding of nothing if it names no source, and a
+    dissent from the other adjudicator's reading if it names one.
     """
     new: dict[SourceKey, Adjudication] = {}
     searched_for: set[str] = set()
-    declined, declined_here = study.declined, set()
+    dissented_from: set[SourceKey] = set()
 
-    def finding(row: dict) -> NothingFound | None:
+    def without_a_reading(row: dict) -> NothingFound | Dissent | None:
         if _filled(row, WHAT_IS_READ):
-            raise ValueError("a row records a reading or a search that found nothing, not both")
+            raise ValueError("a row records a reading or that nothing was found, not both")
         if row["source"]:
-            found = NothingFound(row["nct"], adjudicator, row[SEARCHED], study.today,
-                                 _one_of(row["source_type"], SOURCE_TYPES, "source type"), row["source"])
-            if adjudicator in declined.get(found.about, ()) or found.about in declined_here:
+            dissent = Dissent(row["nct"], adjudicator, _one_of(row["source_type"], SOURCE_TYPES, "source type"), row["source"],
+                              row[SEARCHED], study.today)
+            key = (dissent.nct, dissent.source_type, dissent.source)
+            if key in new:
+                raise ValueError("this file also records a reading of this source; it either states the result or does not")
+            if adjudicator in study.dissented.get(key, ()) or key in dissented_from:
                 return None
-            declined_here.add(found.about)
-        else:
-            found = NothingFound(row["nct"], adjudicator, row[SEARCHED], study.today)
-            if any(key[0] == found.nct for key in new):
-                raise ValueError("this file also records a reading for this trial; a trial with a source has not found nothing")
-            if adjudicator in study.found_nothing(found.nct) or found.nct in searched_for:
-                return None
-            searched_for.add(found.nct)
+            require_dissent_recordable(dissent, study.log, study.today)
+            dissented_from.add(key)
+            return dissent
+        found = NothingFound(row["nct"], adjudicator, row[SEARCHED], study.today)
+        if any(key[0] == found.nct for key in new):
+            raise ValueError("this file also records a reading for this trial; a trial with a source has not found nothing")
+        if adjudicator in study.found_nothing(found.nct) or found.nct in searched_for:
+            return None
         require_nothing_found_recordable(found, study.log, study.today)
+        searched_for.add(found.nct)
         return found
 
-    def entry(row: dict) -> Adjudication | NothingFound | None:
+    def entry(row: dict) -> Entry | None:
         if row["nct"] not in study.trials:
             raise ValueError("not on the worklist")
         if row[SEARCHED]:
-            return finding(row)
+            return without_a_reading(row)
         reading = _reading(row, adjudicator, study)
         key = (reading.nct, reading.source_type, reading.source)
         if key in new:
             raise ValueError("the same source is read twice in this file")
         if reading.nct in searched_for:
             raise ValueError("this file also records a search that found nothing for this trial")
+        if key in dissented_from:
+            raise ValueError("this file also says this source does not state the result; it either does or does not")
         # Every source the log has known for the trial, including one read differently and since withdrawn by both.
         known = (*(k for k in study.sources if k[0] == reading.nct), *(k for k in new if k[0] == reading.nct))
         for (_, source_type, source) in known:
@@ -369,9 +401,9 @@ def _entries_of_form(study: _Study, adjudicator: str, path: pathlib.Path, revise
         new[key] = reading
         return reading
 
-    wanted = [(line, row) for line, row in _rows(path, FORM_COLUMNS, "an adjudication form")
-              if _filled(row, (*WHAT_IS_READ, SEARCHED))]
-    return _made_from(wanted, entry)
+    rows = _rows(path, FORM_COLUMNS, "an adjudication form")
+    _typed_rows(study, rows, path)
+    return _made_from([(line, row) for line, row in rows if _filled(row, (*WHAT_IS_READ, SEARCHED))], entry)
 
 
 # --- the steps ---------------------------------------------------------------------------
@@ -385,65 +417,63 @@ def form(study: _Study, adjudicator: str, reread: Iterable[str] = ()) -> int:
     this adjudicator has already searched and found nothing. A row on which the
     adjudicator typed an address and no reading yet is kept as typed. Trials
     named to be read again get a row for each source the adjudicator has read or
-    found to state no result, or a blank row. A form that holds rows not yet
-    recorded is never written over.
+    dissented from, or a blank row. A form that holds rows not yet recorded is
+    never written over.
     """
     path, typed = _form_path(study, adjudicator), {}
     if path.exists():
         rows = _rows(path, FORM_COLUMNS, "an adjudication form")
-        waiting = [line for line, row in rows if _filled(row, (*WHAT_IS_READ, SEARCHED))]
         try:
             unrecorded = len(_entries_of_form(study, adjudicator, path, revise=True))
         except RowsRefused:
-            unrecorded = len(waiting)
+            unrecorded = sum(_filled(row, (*WHAT_IS_READ, SEARCHED)) for _, row in rows)
         if unrecorded:
             raise ValueError(f"{path} holds {counted(unrecorded, 'row')} not yet recorded; run record, or delete the file")
-        for line, row in rows:
-            if row["source"] and line not in waiting:
-                if row["nct"] not in study.trials:
-                    raise ValueError(f"{path}: row {line} gives a source for {row['nct']}, which is not on the worklist; "
-                                     f"correct the registry number or remove the row")
-                typed[(row["nct"], row["source_type"], row["source"])] = row
+        typed = _typed_rows(study, rows, path)
     strangers = [nct for nct in reread if nct not in study.trials]
     if strangers:
         raise ValueError(f"not on the worklist: {', '.join(strangers)}")
     registry = _registry(study.root)
-    declined_by_me = {key for key, who in study.declined.items() if adjudicator in who}
+    dissented_by_me = {key for key, who in study.dissented.items() if adjudicator in who}
     rows = []
     for nct, trial in study.trials.items():
         cited = study.read_by(nct)
         mine = [key for key, state in cited.items() if adjudicator in state.readings]
-        to_read = sorted((key for key, state in cited.items() if adjudicator not in state.readings and key not in declined_by_me),
-                         key=lambda key: (SOURCE_TYPES.index(key[1]), key[2]))
-        to_read += [key for key in typed if key[0] == nct and key not in (*to_read, *mine)]
+        given = sorted((key for key, state in cited.items() if adjudicator not in state.readings and key not in dissented_by_me),
+                       key=lambda key: (SOURCE_TYPES.index(key[1]), key[2]))
         if nct in reread:
-            to_read += [*mine, *(key for key in declined_by_me if key[0] == nct)]
+            given += [*mine, *(key for key in dissented_by_me if key[0] == nct)]
+        to_read = given + [key for key in typed if key[0] == nct and key not in (*given, *mine)]
         if not to_read and (nct in reread or (not cited and adjudicator not in study.found_nothing(nct)
                                                and "left_the_worklist" not in trial)):
             to_read = [(nct, "", "")]
         for key in to_read:
-            as_typed = typed.get(key, {})
+            as_typed = typed.get(key, {}) if key not in given else {}
             rows.append((nct, trial.get("title"), trial.get("scored_endpoint"), registry.get(nct, {}).get("primary_outcomes"),
                          key[1], key[2], "", as_typed.get("language") or "en", "", "", as_typed.get("endpoint_rule") or "single",
-                         "", "", "", as_typed.get("hazard_ratio_endpoint") or trial.get("scored_endpoint"), ""))
+                         "", "", "", as_typed.get("hazard_ratio_endpoint") or trial.get("scored_endpoint"), "",
+                         _given_mark(key[1], key[2]) if key in given else ""))
     write_table(path, FORM_COLUMNS, rows)
     print(f"{counted(len(rows), 'row')} for {study.named(adjudicator)} in {path}")
     return 0
 
 
 def record(study: _Study, adjudicator: str, revise: bool) -> int:
-    """Record every filled row of the adjudicator's form, as a reading or a finding of nothing made today, or none."""
+    """Record every filled row of the adjudicator's form, each as what it is and made today, or none of them."""
     path = _form_path(study, adjudicator)
     if not path.exists():
         raise ValueError(f"there is no form at {path}; run form first")
     entries = _entries_of_form(study, adjudicator, path, revise)
-    readings = [entry for entry in entries if isinstance(entry, Adjudication)]
-    findings = [entry for entry in entries if isinstance(entry, NothingFound)]
-    for reading in readings:
-        record_adjudication(study.log_file("adjudications"), reading, study.log.forecast_access, study.today)
-    for finding in findings:
+    made = {kind: [entry for entry in entries if isinstance(entry, kind)] for kind in (Adjudication, NothingFound, Dissent)}
+    for reading in made[Adjudication]:
+        record_adjudication(study.log_file("adjudications"), reading, study.log, study.today)
+    for finding in made[NothingFound]:
         record_nothing_found(study.log_dir / NOTHING_FOUND, finding, study.log, study.today)
-    print(counted(len(readings), "reading") + (f" and {counted(len(findings), 'finding')} of nothing" if findings else "")
+    for dissent in made[Dissent]:
+        record_dissent(study.log_file("dissents"), dissent, study.log, study.today)
+    others = [counted(len(made[NothingFound]), "finding") + " of nothing"] * bool(made[NothingFound]) \
+        + [counted(len(made[Dissent]), "dissent")] * bool(made[Dissent])
+    print(" and ".join([", ".join([counted(len(made[Adjudication]), "reading"), *others[:-1]]), *others[-1:]])
           + f" recorded for {study.named(adjudicator)}")
     return form(_load(study.root, study.set, study.today), adjudicator)
 
@@ -455,20 +485,19 @@ def _in_disagreement(study: _Study) -> dict[SourceKey, SourceState]:
 
 
 def _with_a_source_still_to_read(study: _Study) -> set[str]:
-    """Trials with a source one adjudicator has read and the other has neither read nor found to state no result.
+    """Trials with a source one adjudicator has read and the other has neither read nor dissented from.
 
     Nothing the two differ on in such a trial is shown to either of them yet:
     one of them still has a reading to make without knowing the other's.
     """
-    declined = study.declined
-    return {key[0] for key, state in study.sources.items() if len(state.readings) == 1 and key not in declined}
+    return {key[0] for key, state in study.sources.items() if len(state.readings) == 1 and not state.dissents}
 
 
 def _laid_open(study: _Study) -> tuple[dict[SourceKey, SourceState], dict[SourceKey, tuple[str, ...]]]:
-    """What the two may now look at together: sources read differently, and sources one read and the other finds empty."""
+    """What the two may now look at together: sources both read, differently, and sources one read and the other dissents from."""
     waiting = _with_a_source_still_to_read(study)
     return ({key: state for key, state in _in_disagreement(study).items() if key[0] not in waiting},
-            {key: who for key, who in study.declined.items() if key[0] not in waiting})
+            {key: who for key, who in study.dissented.items() if key[0] not in waiting})
 
 
 def _where_it_stands(study: _Study, nct: str, settled: dict, waiting: dict, nothing: dict) -> str:
@@ -520,13 +549,15 @@ def disagreements(study: _Study) -> int:
 
     A trial with a source that one of them has still to read is held back: its
     readings are not shown to either until both have read everything cited. A
-    source that one read and the other finds not to state the result cannot be
-    reconciled, having one reading; it is named, for the two to resolve.
+    source that one read and the other dissents from cannot be reconciled,
+    having one reading; it is named, for the two to resolve.
     """
-    path, (read_differently, declined) = _disagreements_path(study), _laid_open(study)
+    path, (read_differently, dissented) = _disagreements_path(study), _laid_open(study)
     if path.exists():
+        # A settlement typed against readings that have since changed can no longer be recorded, so it is not kept.
+        still = {key: _as_listed(state) for key, state in _in_disagreement(study).items()}
         unrecorded = [row for _, row in _rows(path, DISAGREEMENT_COLUMNS, "a list of disagreements")
-                      if _filled(row, SETTLED) and (row["nct"], row["source_type"], row["source"]) in read_differently]
+                      if _filled(row, SETTLED) and still.get((row["nct"], row["source_type"], row["source"])) == row[AS_LISTED]]
         if unrecorded:
             raise ValueError(f"{path} holds {counted(len(unrecorded), 'reconciliation')} not yet recorded; "
                              f"run reconcile, or delete the file")
@@ -538,10 +569,10 @@ def disagreements(study: _Study) -> int:
     held_back = len(_in_disagreement(study)) - len(rows)
     print(f"{counted(len(rows), 'source')} read differently, listed in {path}"
           + (f"; {held_back} more wait until both have read every source of their trial" if held_back else ""))
-    for (nct, _, source), who in sorted(declined.items()):
-        reader = " and ".join(study.named(name) for name in sorted(study.sources[(nct, _, source)].readings))
+    for (nct, source_type, source), who in sorted(dissented.items()):
+        reader = " and ".join(study.named(name) for name in sorted(study.sources[(nct, source_type, source)].readings))
         print(f"{nct}: {reader} read {source}; {' and '.join(study.named(name) for name in who)} finds it does not state "
-              f"the result. Either the reading is withdrawn, or the source is read by both.")
+              f"the result. Either the reading is withdrawn, or the source is read by both and reconciled.")
     return 0
 
 

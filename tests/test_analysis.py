@@ -588,18 +588,20 @@ def test_every_kind_of_log_entry_is_part_of_what_the_final_analysis_was_run_on(t
 def test_two_reconciliations_recorded_in_another_order_are_not_the_log_the_analysis_was_run_on(tmp_path):
     batches, log = a_study_of(120)
     readout = dt.date(2027, 8, 1)
-    disputed = [a if (a.nct, a.adjudicator) != ("NCT0002", "second") else adjudicated("NCT0002", "second", "negative", readout=readout)
+    differing = ("NCT0002", "NCT0003")
+    disputed = [adjudicated(a.nct, "second", "negative", readout=readout) if a.adjudicator == "second" and a.nct in differing else a
                 for a in log.adjudications]
 
-    def settle(outcome):
-        return Reconciliation(nct="NCT0002", source_type="press_release_or_filing", source="https://example.test/topline",
-                              outcome=outcome, hazard_ratio=None, hazard_ratio_endpoint=None, disclosed_on=readout,
-                              reason=f"read again: {outcome}", adjudicators=("first", "second"), recorded_on=readout)
+    def settle(nct):
+        return Reconciliation(nct=nct, source_type="press_release_or_filing", source="https://example.test/topline",
+                              outcome="positive", hazard_ratio=None, hazard_ratio_endpoint=None, disclosed_on=readout,
+                              reason="read again", adjudicators=("first", "second"), recorded_on=readout)
 
     record_file = tmp_path / "analyses.jsonl"
-    run_final((batches, AdjudicationLog(disputed, [settle("positive"), settle("negative")])), EIGHTEEN_MONTHS, record_file)
+    run_final((batches, AdjudicationLog(disputed, [settle("NCT0002"), settle("NCT0003")])), EIGHTEEN_MONTHS, record_file)
+    # The same two entries the other way round give the same results, and are still not the log that was analysed.
     with pytest.raises(AlreadyRun):
-        run_final((batches, AdjudicationLog(disputed, [settle("negative"), settle("positive")])), EIGHTEEN_MONTHS, record_file)
+        run_final((batches, AdjudicationLog(disputed, [settle("NCT0003"), settle("NCT0002")])), EIGHTEEN_MONTHS, record_file)
 
 
 def test_a_recorded_extension_must_follow_from_what_it_was_decided_on(tmp_path):
@@ -679,13 +681,13 @@ def test_an_extension_record_that_claims_the_log_was_empty_is_refused(tmp_path):
     batches, log = a_study_of(120)
     nothing = AdjudicationLog()
     as_if_empty = study_state(batches, nothing, EIGHTEEN_MONTHS, EIGHTEEN_MONTHS)
-    forged = AnalysisRecord("extension", EIGHTEEN_MONTHS, TWENTY_FOUR_MONTHS, 0, (batches[0].fingerprint,), (0, 0, 0, 0),
+    forged = AnalysisRecord("extension", EIGHTEEN_MONTHS, TWENTY_FOUR_MONTHS, 0, (batches[0].fingerprint,), (0, 0, 0, 0, 0),
                             FEW_RESAMPLES, analysis._inputs_fingerprint(as_if_empty, nothing, PLAN), "00" * 32)
     records.append(tmp_path / "forged.jsonl", forged)
     with pytest.raises(AlreadyRun, match="dated before"):
         run_final((batches, log), TWENTY_FOUR_MONTHS, tmp_path / "forged.jsonl")
     with pytest.raises(ValueError):
-        log.first((-1, 0, 0, 0))
+        log.first((-1, 0, 0, 0, 0))
 
 
 def test_a_final_analysis_first_run_after_both_dates_extends_and_then_tests_in_one_go(tmp_path):

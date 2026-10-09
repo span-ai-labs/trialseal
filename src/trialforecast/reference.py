@@ -23,7 +23,8 @@ import numpy as np
 
 from trialforecast import scoring, traces, universe
 from trialforecast.adjudication import (
-    TrialResult, adjudicator_agreement, awaiting_result, no_result_found, read_log, read_nothing_found, results,
+    LOG_KINDS, NOTHING_FOUND, TrialResult, adjudicator_agreement, awaiting_result, no_result_found, read_log,
+    read_nothing_found, require_nothing_from_the_future, results,
 )
 from trialforecast.analysis import scored_hazard_ratio
 from trialforecast.forecasting import BaseRateForecaster, Candidate
@@ -234,24 +235,40 @@ def frozen_base_rates(trials: Iterable[ReferenceTrial], frozen_on: dt.date) -> d
             "pooled": sorted(pooled), "hazard_ratios_pooled": sorted(pooled_ratios), "counts": counts}
 
 
-def _fingerprints(root: pathlib.Path, files: Iterable[pathlib.Path]) -> dict[str, str]:
-    return {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files if path.exists()}
+def _made_from(root: pathlib.Path) -> dict[str, str | None]:
+    """Every file the figures rest on, with its SHA-256; or None for one that could hold something and does not exist.
+
+    The absent ones are named so that a file appearing later is noticed as surely as one that changes.
+    """
+    log = root / REFERENCE_ADJUDICATION
+    files = {*(root / TRACES).glob("trace_*.csv"), *(root / TRACES).glob("rechecks*.csv"), *log.glob("*.json*"),
+             *(log / file_name for file_name, _ in LOG_KINDS.values()), log / NOTHING_FOUND, root / DESIGN_REVIEWS}
+    return {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+            for path in sorted(files)}
 
 
 def base_rate_forecaster(root: pathlib.Path) -> BaseRateForecaster:
     """The reference forecaster, from the figures frozen for registration.
 
-    Refuses if anything the figures were made from has changed since: the frozen
-    file would then no longer be what the traces and adjudications give.
+    Refuses if anything the figures were made from has changed since, or a file
+    they would have been made from has appeared: the frozen file would then no
+    longer be what the traces and adjudications give.
     """
     figures = json.loads((root / FROZEN).read_text(encoding="utf-8"))
-    changed = sorted(name for name, digest in figures["made_from"].items()
-                     if _fingerprints(root, [root / name]).get(name) != digest)
+    then, now = figures["made_from"], _made_from(root)
+    changed = sorted(name for name in {*then, *now} if then.get(name) != now.get(name))
     if changed:
-        raise ValueError(f"the base rates were frozen on {figures['frozen_on']} from files that have since changed "
-                         f"or gone: {', '.join(changed)}")
+        raise ValueError(f"the base rates were frozen on {figures['frozen_on']} from files that have since changed, "
+                         f"gone or appeared: {', '.join(changed)}")
     return BaseRateForecaster(figures["base_rates"], {name: tuple(triple) for name, triple in figures["hazard_ratios"].items()},
                               version=f"frozen {figures['frozen_on']}")
+
+
+def _traced_as(trials: Iterable[ReferenceTrial], ncts: Iterable[str]) -> dict[str, str]:
+    """A mark of how each of these trials was traced, to tell later whether its trace has changed. It gives nothing away."""
+    wanted = set(ncts)
+    return {t.nct: hashlib.sha256(f"{t.nct}|{t.place}|{t.readout_date}|{t.hazard_ratio}".encode()).hexdigest()[:12]
+            for t in trials if t.nct in wanted}
 
 
 def _to_read(trials: Iterable[ReferenceTrial]) -> list[str]:
@@ -303,7 +320,6 @@ class _Study:
     adjudicated: dict[str, TrialResult]
     no_result_found: set[str]  # trials both adjudicators searched for and found nothing
     agreement: dict
-    made_from: list[pathlib.Path]  # every file the figures rest on
 
 
 def _load(root: pathlib.Path, today: dt.date) -> _Study:
@@ -311,15 +327,14 @@ def _load(root: pathlib.Path, today: dt.date) -> _Study:
     trace_files = sorted((root / TRACES).glob("trace_*.csv"))
     sources = dict(trace_files=trace_files, candidates=candidates, rechecks=sorted((root / TRACES).glob("rechecks*.csv")),
                    design_reviews=read_records(root / DESIGN_REVIEWS, DesignReview))
-    log = read_log(root / REFERENCE_ADJUDICATION)
+    log, findings = read_log(root / REFERENCE_ADJUDICATION), read_nothing_found(root / REFERENCE_ADJUDICATION)
+    require_nothing_from_the_future([*findings, *(entry for kind in LOG_KINDS for entry in getattr(log, kind))], today)
     adjudicated = results(log, today)
-    nothing_found = set(no_result_found(read_nothing_found(root / REFERENCE_ADJUDICATION), log, today))
-    made_from = [*trace_files, *sources["rechecks"], *sorted((root / REFERENCE_ADJUDICATION).glob("*.json*")),
-                 root / DESIGN_REVIEWS]
+    nothing_found = set(no_result_found(findings, log, today))
     return _Study(root, today, candidates, reference_trials(**sources),
                   reference_trials(**sources, adjudicated=adjudicated, awaiting_adjudication=awaiting_result(log, today),
                                    as_of=today, no_result_found=nothing_found),
-                  adjudicated, nothing_found, adjudicator_agreement(log), made_from)
+                  adjudicated, nothing_found, adjudicator_agreement(log))
 
 
 def _share(value: float | None) -> str:
@@ -393,29 +408,45 @@ def _drawn(root: pathlib.Path) -> dict | None:
     return json.loads((root / SAMPLE).read_text(encoding="utf-8")) if (root / SAMPLE).exists() else None
 
 
+def _settled(study: _Study, nct: str) -> bool:
+    return nct in study.adjudicated or nct in study.no_result_found
+
+
+def _trace_borne_out(accuracy: dict) -> bool:
+    return not accuracy["trials"] or accuracy["outcome_matched"] >= TRACE_ACCURACY_NEEDED * accuracy["trials"]
+
+
 def sample(study: _Study) -> int:
     """Draw the adjudicators' sample, once, and list it for them with nothing of what the trace found.
 
     It is drawn only when no trace still awaits a re-check, and it records the
-    trials it was drawn from, so that a sample of an earlier, smaller set cannot
-    later stand for the whole. The list the adjudicators are given also holds
-    the trials the trace left in doubt, which only they can settle; it does not
-    say which those are.
+    trials it was drawn from and a mark of how each was traced, so that neither a
+    sample of an earlier, smaller set nor a trace changed afterwards can later
+    stand for what was drawn. The list the adjudicators are given also holds the
+    trials the trace left in doubt, which only they can settle; it does not say
+    which those are. If they have settled the sample and the trace did not match
+    them often enough, the list becomes every traced trial with a result.
     """
     drawn = _drawn(study.root)
     if drawn is None:
         waiting = sum(t.place == AWAITING_RECHECK for t in study.traced)
         if waiting:
             raise ValueError(f"{counted(waiting, 'trace')} still await a re-check; the sample is drawn once they are made")
+        drawn_from = _to_read(study.traced)
         drawn = {"drawn_on": study.today.isoformat(), "seed": SAMPLE_SEED, "trials": adjudication_sample(study.traced),
-                 "drawn_from": _to_read(study.traced)}
+                 "drawn_from": drawn_from, "traced_as": _traced_as(study.traced, drawn_from)}
         (study.root / SAMPLE).parent.mkdir(parents=True, exist_ok=True)
         (study.root / SAMPLE).write_text(json.dumps(drawn, indent=2) + "\n", encoding="utf-8")
-    to_read = sorted({*drawn["trials"], *(t.nct for t in study.traced if t.place == IN_DOUBT)})
+    to_read = {*drawn["trials"], *(t.nct for t in study.traced if t.place == IN_DOUBT)}
+    accuracy = trace_accuracy(study.traced, study.adjudicated, study.no_result_found)
+    if all(_settled(study, nct) for nct in drawn["trials"]) and not _trace_borne_out(accuracy):
+        to_read |= set(_to_read(study.traced))
+        print(f"the trace matched the adjudicators on only {accuracy['outcome_matched']} of {accuracy['trials']}, "
+              f"so every traced trial is listed for them to read")
     worklist = study.root / REFERENCE_WORKLIST
     write_table(worklist, ("nct", "acronym", "title", "scored_endpoint"),
                 [(nct, study.candidates[nct].get("acronym"), study.candidates[nct].get("brief_title"),
-                  study.candidates[nct]["scored_endpoint"]) for nct in to_read])
+                  study.candidates[nct]["scored_endpoint"]) for nct in sorted(to_read)])
     print(f"{counted(len(to_read), 'trial')} for both adjudicators, listed in {worklist}; "
           f"the draw is kept in {study.root / SAMPLE}")
     return 0
@@ -425,10 +456,11 @@ def freeze(study: _Study) -> int:
     """Fix the figures the base-rate forecaster will use, once, and only when they are fit to be fixed.
 
     Nothing may still be waiting to be counted. The sample must have been drawn
-    from the trials now in the reference set, and the adjudicators must have
-    settled every sampled trial still in it. And their readings must bear the
-    trace out: if they contradict it too often, the traces they did not read
-    cannot be relied on. The file records what it was made from.
+    from the trials now in the reference set, traced as they were at the draw,
+    and the adjudicators must have settled every sampled trial. And their
+    readings must bear the trace out: if they contradict it too often, the traces
+    they did not read cannot be relied on, and they read them all. The file
+    records what it was made from.
     """
     frozen, drawn = study.root / FROZEN, _drawn(study.root)
     waiting = [t.nct for t in study.trials if t.place in NOT_YET_COUNTED]
@@ -444,15 +476,23 @@ def freeze(study: _Study) -> int:
     if joined:
         raise NotFrozen(f"{counted(len(joined), 'trial')} joined the reference set after the sample was drawn on "
                         f"{drawn['drawn_on']}, so the sample no longer speaks for it: {', '.join(joined[:10])}")
-    unread = [nct for nct in drawn["trials"] if nct in now and nct not in study.adjudicated and nct not in study.no_result_found]
+    # The trace is judged as it stood when the sample was drawn. One changed since, to match the adjudicators or
+    # for any other reason, is not the trace they checked.
+    as_drawn, as_now = drawn.get("traced_as", {}), _traced_as(study.traced, drawn["drawn_from"])
+    retraced = sorted(nct for nct in drawn["drawn_from"] if as_drawn.get(nct) != as_now.get(nct))
+    if retraced:
+        raise NotFrozen(f"{counted(len(retraced), 'trial')} have been traced or re-checked differently since the sample "
+                        f"was drawn on {drawn['drawn_on']}: {', '.join(retraced[:10])}")
+    unread = [nct for nct in drawn["trials"] if not _settled(study, nct)]
     if unread:
         raise NotFrozen(f"the adjudicators have not settled {len(unread)} of the {len(drawn['trials'])} trials in their sample")
     accuracy = trace_accuracy(study.traced, study.adjudicated, study.no_result_found)
-    if accuracy["trials"] and accuracy["outcome_matched"] < TRACE_ACCURACY_NEEDED * accuracy["trials"]:
+    if not _trace_borne_out(accuracy) and not all(_settled(study, nct) for nct in now):
         raise NotFrozen(f"the trace had the outcome right for only {accuracy['outcome_matched']} of the {accuracy['trials']} "
-                        f"trials the adjudicators read, so the traces they did not read cannot be relied on")
+                        f"trials the adjudicators read, so the traces they did not read cannot be relied on; "
+                        f"`trialseal-reference sample` now lists every traced trial for them")
     figures = frozen_base_rates(study.trials, study.today)
-    figures.update(made_from=_fingerprints(study.root, study.made_from), adjudicated=sum(t.adjudicated for t in study.trials),
+    figures.update(made_from=_made_from(study.root), adjudicated=sum(t.adjudicated for t in study.trials),
                    trace_accuracy=accuracy)
     frozen.parent.mkdir(parents=True, exist_ok=True)
     frozen.write_text(json.dumps(figures, indent=2) + "\n", encoding="utf-8")

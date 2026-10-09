@@ -26,7 +26,7 @@ uv run trialseal-adjudicate form --set reference --by "Your Name"
 
 This writes your form to `adjudication/working/reference/form_your-name.csv`. There is one row for each source waiting for your reading.
 
-- Where the other adjudicator has cited a source, its type and address are filled in and nothing else. Leave both exactly as they are and read that source yourself. If you know of another source that states the result, copy the row and give the other source on the copy.
+- Where the other adjudicator has cited a source, its type and address are filled in and nothing else. Leave both, and the `as_given` cell, exactly as they are and read that source yourself. If you know of another source that states the result, copy the row and give the other source on the copy.
 - Where a row has no source, find the trial's sources yourself, starting with the first public disclosure of the primary analysis.
 
 Fill in the rows you have read, save, then:
@@ -82,11 +82,14 @@ A trial may have several sources: give each its own row. Record every source tha
 
 A trial that ended with no primary analysis is not this case. Record the source that says so, with `early_stop` as `no_analysis`.
 
-**A source the other adjudicator cited that does not state the result.** Leave its reading cells blank and write in `nothing_found`, on that source's row, what the source holds instead, for example `an interim safety review; no primary analysis reported`. `status` then shows the trial as `read differently` and the two of you may talk about that source. Either they withdraw their reading, or you run `form` with `--reread` and read it.
+**A source the other adjudicator cited that does not state the result.** Leave its reading cells blank and write in `nothing_found`, on that source's row, what the source holds instead, for example `an interim safety review; no primary analysis reported`. This is recorded as your dissent from their reading. Once neither of you has another source of the trial still to read, `status` shows the trial as `read differently`, `disagreements` names the source, and the two of you may talk about it. Then one of two things happens:
+
+- They agree and withdraw their reading. If nothing else states the result, each of you then records a search that found nothing.
+- They stand by it. From the next day, run `form` with `--reread NCT01234567`, read the source and record what it states. Because you have talked, the source then goes through `disagreements` and `reconcile` like any other you read differently, even if your two readings now match.
 
 ## What goes in each cell of the list of disagreements
 
-Each row shows both readings of one source. Leave those cells and `as_listed` alone; it does not matter if the spreadsheet rewrites a date or a number in them. Format the `settled_disclosed_on` column as text before typing. Fill in what the two of you settle on:
+Each row shows both readings of one source. Leave those cells and `as_listed` alone; it does not matter if the spreadsheet rewrites a date or a number in them. Format the `settled_disclosed_on` column as text before typing. If `reconcile` says the readings have changed since the list was written, run `disagreements` again and settle the fresh list. Fill in what the two of you settle on:
 
 | Cell | What to write |
 |---|---|
@@ -102,11 +105,15 @@ What both of you read the same way cannot be changed here. If you both recorded 
 ## When something is wrong
 
 - **You made a mistake in a reading you have recorded.** Run `form` with `--reread NCT01234567` to get a row for each source you have read for that trial. Fill in the row as it should be and run `record` with `--revise`. Both readings stay in the log. If the other adjudicator has already read the source differently, it stays a disagreement until you reconcile it.
-- **You cited a source that is not about this trial.** `uv run trialseal-adjudicate withdraw --set reference --by "Your Name" --trial NCT01234567 --source "the address" --reason "why"`. Neither of you can record a reading of that source again until the next day.
+- **You cited a source that is not about this trial.** `uv run trialseal-adjudicate withdraw --set reference --by "Your Name" --trial NCT01234567 --source "the address" --reason "why"`. Neither of you can record a reading of that source again until the next day. If the other adjudicator has read it too, they withdraw theirs as well. A source both of you have withdrawn, each with a reason, no longer counts for the trial. A reading of a source you reconciled today can be withdrawn from tomorrow.
 - **You think a source the other adjudicator cited does not state the result.** Say so on its row: see "When you find nothing".
-- **You think a source the other adjudicator cited has the wrong source type.** Tell them that one thing. They withdraw it and cite it again the next day under the right type.
+- **You think a source the other adjudicator cited has the wrong source type.** Tell them that one thing. They withdraw their reading, and you yours if you have read it; the next day it is cited again under the right type. This cannot be done for a source the two of you have read differently: reconcile it as it is, and note the right type in the reason.
 - **A source you found yourself does not say whether the endpoint was met.** Do not record it. A source is recorded only when it states a result.
 - **You want to add a source to a trial that no longer shows on your form.** Run `form` with `--reread NCT01234567` and copy one of its rows.
+
+## If the trace does not hold up
+
+For the reference trials, your readings are compared with the trace. If they match on fewer than nine in ten, `trialseal-reference sample` lists every traced trial for the two of you to read, and the base rates are frozen from your readings alone.
 
 ## Once the base rates are frozen
 

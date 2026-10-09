@@ -158,6 +158,10 @@ _Avoid_: Entry, call, label
 An adjudicator taking back a reading, with a reason, for example of a source that turned out to be about another trial. The reading stays in the log.
 _Avoid_: Deletion, retraction
 
+**Dissent**:
+An adjudicator's record that a source the other adjudicator cited does not state the trial's result. The source is from then on one the two have read differently: if the dissenter later reads it, only a reconciliation settles it. It lapses when the cited reading is changed or withdrawn.
+_Avoid_: Decline, objection, rejection
+
 **Finding of nothing**:
 An adjudicator's record that they searched and found no public source that states the result of a trial's primary analysis. When both adjudicators have one and neither has a reading in force, the trial has no result found. It gives the trial no result and is kept beside the adjudication log.
 _Avoid_: Negative finding, null result, not found

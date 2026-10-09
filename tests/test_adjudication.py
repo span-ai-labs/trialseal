@@ -7,9 +7,11 @@ import pytest
 
 from trialforecast import records
 from trialforecast.adjudication import (
-    ONE_READING, Adjudication, AdjudicationLog, ForecastAccess, NotBlind, NothingFound, Reconciliation, Withdrawal,
-    awaiting_result, declined_sources, derive_outcome, no_result_found, normalised_name, read_log, read_nothing_found, record_adjudication,
-    record_forecast_access, record_nothing_found, record_reconciliation, record_withdrawal, require_fits_the_log,
+    adjudicator_agreement,
+    ONE_READING, Adjudication, AdjudicationLog, Dissent, ForecastAccess, NotBlind, NothingFound, Reconciliation, Withdrawal,
+    awaiting_result, derive_outcome, no_result_found, normalised_name, read_log, read_nothing_found, record_adjudication,
+    record_dissent, record_forecast_access, record_nothing_found, record_reconciliation, record_withdrawal,
+    require_fits_the_log, source_states,
     require_reconcilable, results, set_aside, unsettled_sources,
 )
 
@@ -229,7 +231,7 @@ def test_an_adjudicator_may_correct_their_own_entry_before_anyone_disagrees(tmp_
         adjudicated(adjudicator="second", recorded_on=TOPLINE_DAY + dt.timedelta(days=2)),
     ]
     for entry in entries:
-        record_adjudication(log_file, entry, forecast_access=[], today=entry.recorded_on)
+        record_adjudication(log_file, entry, AdjudicationLog(), today=entry.recorded_on)
     kept = records.read(log_file, Adjudication)
     assert kept == entries  # the log keeps the superseded entry
     assert result_of(kept).outcome == "positive"
@@ -350,11 +352,11 @@ def test_someone_who_has_opened_a_trials_forecasts_cannot_adjudicate_it(tmp_path
     log_file = tmp_path / "adjudication.jsonl"
     opened = [ForecastAccess(nct="NCT1", person="First", opened_on=TOPLINE_DAY)]
     with pytest.raises(NotBlind, match="first"):
-        record_adjudication(log_file, adjudicated(adjudicator="first"), forecast_access=opened, today=TOPLINE_DAY)
+        record_adjudication(log_file, adjudicated(adjudicator="first"), log_of([], forecast_access=opened), today=TOPLINE_DAY)
     assert not log_file.exists()
     # Someone else, or another trial, is unaffected.
-    record_adjudication(log_file, adjudicated(adjudicator="second"), forecast_access=opened, today=TOPLINE_DAY)
-    record_adjudication(log_file, adjudicated(nct="NCT2", adjudicator="first"), forecast_access=opened, today=TOPLINE_DAY)
+    record_adjudication(log_file, adjudicated(adjudicator="second"), log_of([], forecast_access=opened), today=TOPLINE_DAY)
+    record_adjudication(log_file, adjudicated(nct="NCT2", adjudicator="first"), log_of([], forecast_access=opened), today=TOPLINE_DAY)
     assert len(records.read(log_file, Adjudication)) == 2
 
 
@@ -401,8 +403,8 @@ def test_the_whole_log_is_read_back_from_its_directory(tmp_path):
     opened = ForecastAccess(nct="NCT1", person="first", opened_on=LATER)
     assert read_log(tmp_path) == AdjudicationLog()
 
-    record_adjudication(tmp_path / "adjudications.jsonl", first, [], today=TOPLINE_DAY)
-    record_adjudication(tmp_path / "adjudications.jsonl", second, [], today=TOPLINE_DAY)
+    record_adjudication(tmp_path / "adjudications.jsonl", first, AdjudicationLog(), today=TOPLINE_DAY)
+    record_adjudication(tmp_path / "adjudications.jsonl", second, AdjudicationLog(), today=TOPLINE_DAY)
     record_reconciliation(tmp_path / "reconciliations.jsonl", settled, AdjudicationLog([first, second]), today=TOPLINE_DAY)
     records.append(tmp_path / "forecast_access.jsonl", opened)
 
@@ -459,7 +461,7 @@ def test_a_log_can_be_cut_back_to_what_it_held_when_an_analysis_was_run():
     opened = ForecastAccess(nct="NCT1", person="first", opened_on=LATER)
     as_run = AdjudicationLog([first, second], forecast_access=[opened])
     grown = AdjudicationLog([first, second, later], forecast_access=[opened, opened])
-    assert as_run.sizes() == (2, 0, 0, 1)
+    assert as_run.sizes() == (2, 0, 0, 1, 0)
     assert grown.first(as_run.sizes()) == as_run
     with pytest.raises(ValueError, match="fewer entries"):
         as_run.first(grown.sizes())
@@ -516,9 +518,9 @@ def test_a_set_aside_source_that_only_one_person_has_read_does_not_drop_the_tria
 
 def test_a_reading_after_the_reveal_is_taken_only_for_a_source_disclosed_after_it(tmp_path):
     log_file, opened = tmp_path / "adjudications.jsonl", opened_by_both()
-    record_adjudication(log_file, paper_reading("first", recorded_on=PAPER_DAY), opened, today=PAPER_DAY)       # a later source: allowed
+    record_adjudication(log_file, paper_reading("first", recorded_on=PAPER_DAY), log_of([], forecast_access=opened), today=PAPER_DAY)       # a later source: allowed
     with pytest.raises(NotBlind, match="first"):                                                # the topline was public before
-        record_adjudication(log_file, adjudicated(adjudicator="first", recorded_on=PAPER_DAY), opened, today=PAPER_DAY)
+        record_adjudication(log_file, adjudicated(adjudicator="first", recorded_on=PAPER_DAY), log_of([], forecast_access=opened), today=PAPER_DAY)
     assert len(records.read(log_file, Adjudication)) == 1
 
 
@@ -539,7 +541,7 @@ def test_a_reading_or_a_reconciliation_is_recorded_on_the_day_it_is_made(tmp_pat
     # Dated the day before a reveal but entered after it, a reading would pass for a blind one.
     late_entry = adjudicated(adjudicator="first", recorded_on=TOPLINE_DAY)
     with pytest.raises(ValueError, match="recorded on the day it is made"):
-        record_adjudication(tmp_path / "a.jsonl", late_entry, [], today=TOPLINE_DAY + dt.timedelta(days=40))
+        record_adjudication(tmp_path / "a.jsonl", late_entry, AdjudicationLog(), today=TOPLINE_DAY + dt.timedelta(days=40))
     with pytest.raises(ValueError, match="recorded on the day it is made"):
         record_reconciliation(tmp_path / "r.jsonl", reconciled(), log_of(HAZARD_RATIO_DISPUTE), today=LATER)
 
@@ -651,15 +653,47 @@ def test_a_reading_cannot_be_withdrawn_once_its_adjudicator_has_seen_the_forecas
     assert len(records.read(log_file, Withdrawal)) == 2
 
 
-def test_a_reading_of_a_reconciled_source_cannot_be_withdrawn(tmp_path):
+def test_withdrawing_a_reading_of_a_reconciled_source_reopens_it_and_waits_a_day(tmp_path):
     settled = log_of(HAZARD_RATIO_DISPUTE, reconciliations=[reconciled()])
-    with pytest.raises(ValueError, match="has been reconciled"):
-        record_withdrawal(tmp_path / "w.jsonl", withdrawn("second", LATER), settled, LATER)
-    # Not even on the day it was reconciled, when the log could not tell which came first.
+    # On the day it was reconciled the log could not tell which came first.
     same_day = reconciled().recorded_on
-    with pytest.raises(ValueError, match="has been reconciled"):
+    with pytest.raises(ValueError, match="was reconciled today"):
         record_withdrawal(tmp_path / "w.jsonl", withdrawn("second", same_day), settled, same_day)
     assert not (tmp_path / "w.jsonl").exists()
+    record_withdrawal(tmp_path / "w.jsonl", withdrawn("second", LATER), settled, LATER)
+    # What the two settled rested on both readings. With one taken back, the source is unsettled again.
+    reopened = log_of(HAZARD_RATIO_DISPUTE, reconciliations=[reconciled()], withdrawals=[withdrawn("second", LATER)])
+    assert results(reopened, LATER) == {} and awaiting_result(reopened, LATER) == {"NCT1": "disagreement"}
+    assert result_of(HAZARD_RATIO_DISPUTE, on=LATER - dt.timedelta(days=1), reconciliations=[reconciled()],
+                     withdrawals=[withdrawn("second", LATER)]).hazard_ratio == 0.60
+
+
+def test_a_source_is_reconciled_once_until_a_new_reading_reopens_it():
+    again = reconciled(hazard_ratio=0.95, recorded_on=reconciled().recorded_on + dt.timedelta(days=3), reason="on reflection")
+    with pytest.raises(ValueError, match="does not settle"):
+        results(log_of(HAZARD_RATIO_DISPUTE, reconciliations=[reconciled(), again]), LATER)
+    with pytest.raises(ValueError, match="does not settle"):
+        require_reconcilable(again, log_of(HAZARD_RATIO_DISPUTE, reconciliations=[reconciled()]), again.recorded_on)
+    reread = adjudicated(adjudicator="second", hazard_ratio=0.94, recorded_on=reconciled().recorded_on + dt.timedelta(days=1))
+    assert result_of(HAZARD_RATIO_DISPUTE + [reread], reconciliations=[reconciled(), again]).hazard_ratio == 0.95
+
+
+@pytest.mark.parametrize("changed", [
+    dict(disclosed_on=TOPLINE_DAY - dt.timedelta(days=1)), dict(language="zh", translation="It met."),
+    dict(hazard_ratio_endpoint="PFS"), dict(endpoint_rule="any_of", endpoint_results=("met", "not_met")),
+])
+def test_a_reading_that_changes_anything_the_two_must_agree_on_reopens_a_reconciled_source(changed):
+    day = reconciled().recorded_on + dt.timedelta(days=1)
+    reread = adjudicated(adjudicator="first", **{"hazard_ratio": 0.60, **changed}, recorded_on=day)
+    assert awaiting_result(log_of(HAZARD_RATIO_DISPUTE + [reread], reconciliations=[reconciled()]), LATER) == {"NCT1": "disagreement"}
+
+
+def test_a_reading_is_refused_on_the_day_its_source_was_reconciled_whoever_records_it(tmp_path):
+    settled = log_of(HAZARD_RATIO_DISPUTE, reconciliations=[reconciled()])
+    reread = adjudicated(adjudicator="first", hazard_ratio=0.5, recorded_on=reconciled().recorded_on)
+    with pytest.raises(ValueError, match="was reconciled today"):
+        record_adjudication(tmp_path / "a.jsonl", reread, settled, today=reconciled().recorded_on)
+    assert not (tmp_path / "a.jsonl").exists()
 
 
 def test_a_reconciliation_keeps_what_the_two_readings_agreed_on(tmp_path):
@@ -745,24 +779,71 @@ def test_one_person_is_one_adjudicator_however_their_name_is_encoded():
     assert normalised_name("Ame\u0301lie Reader") == normalised_name("Am\u00e9lie  READER")
 
 
-def test_an_adjudicator_can_find_that_a_source_the_other_cited_does_not_state_the_result(tmp_path):
+def dissent(adjudicator="second", on=LATER, source=TOPLINE):
+    return Dissent(nct="NCT1", adjudicator=adjudicator, source_type="press_release_or_filing", source=source,
+                   reason="it reports only an interim safety review", recorded_on=on)
+
+
+def test_a_dissent_makes_a_source_one_the_two_have_read_differently(tmp_path):
     cited = log_of([adjudicated(adjudicator="first")])
-    declined = NothingFound(nct="NCT1", adjudicator="second", searched="it reports only an interim safety review",
-                            recorded_on=LATER, source_type="press_release_or_filing", source=TOPLINE)
-    record_nothing_found(tmp_path / "nothing_found.jsonl", declined, cited, LATER)
-    assert declined_sources([declined], cited, LATER) == {("NCT1", "press_release_or_filing", TOPLINE): ("second",)}
-    # It is about that one source: it is not a search of the trial that found nothing, and the first reading still waits.
-    assert no_result_found([declined, nothing()], cited, LATER) == {} and awaiting_result(cited, LATER) == {"NCT1": ONE_READING}
-    assert no_result_found([declined, nothing()], AdjudicationLog(), LATER) == {}
-    # It lapses when the one who cited the source withdraws it, or when the one who declined it reads it after all.
-    assert declined_sources([declined], log_of([adjudicated(adjudicator="first")], withdrawals=[withdrawn("first", LATER)]), LATER) == {}
-    assert declined_sources([declined], log_of(both(recorded_on=LATER)), LATER) == {}
-    for refused, why in (
-        (dataclasses.replace(declined, adjudicator="first"), "first has a reading of this source in force"),
-        (dataclasses.replace(declined, source="https://example.test/nobody-read-this"), "nobody has a reading of this source in force"),
+    record_dissent(tmp_path / "dissents.jsonl", dissent(), cited, LATER)
+    assert read_log(tmp_path).dissents == (dissent(),)
+    dissented = log_of([adjudicated(adjudicator="first")], dissents=[dissent()])
+    state, = source_states(dissented, LATER).values()
+    assert state.disputed and list(state.dissents) == ["second"]
+    assert awaiting_result(dissented, LATER) == {"NCT1": "disagreement"}
+    assert awaiting_result(dissented, LATER - dt.timedelta(days=1)) == {"NCT1": ONE_READING}        # before it was made
+    # It is no search of the trial: with the cited reading in force nothing else about the trial changes.
+    assert no_result_found([nothing(), nothing(adjudicator="second")], dissented, LATER) == {}
+
+
+def test_reading_a_source_alike_after_dissenting_from_it_does_not_settle_it():
+    after = LATER + dt.timedelta(days=2)
+    reread = log_of([adjudicated(adjudicator="first"), adjudicated(adjudicator="second", recorded_on=after)], dissents=[dissent()])
+    # They differed on whether it states a result at all, and have talked since. Only a reconciliation settles it.
+    assert awaiting_result(reread, after) == {"NCT1": "disagreement"} and results(reread, after) == {}
+    assert source_states(reread, after)[("NCT1", "press_release_or_filing", TOPLINE)].dissents == {}
+    agreement = adjudicator_agreement(reread)
+    assert (agreement["sources"], agreement["one_found_no_result_stated"], agreement["not_read_by_two"]) == (0, 1, 0)
+    settled = reconciled(hazard_ratio=None, hazard_ratio_endpoint=None, recorded_on=after, reason="the release does state it")
+    assert results(dataclasses.replace(reread, reconciliations=(settled,)), after)["NCT1"].outcome == "positive"
+
+
+def test_a_dissent_is_from_the_readings_as_they_stood():
+    after = LATER + dt.timedelta(days=2)
+    # The one who cited the source reads it again, differently, or withdraws it and cites it again later: the dissent
+    # was from what stood before, so the dissenter has the source to look at again.
+    revised = log_of([adjudicated(adjudicator="first"), adjudicated(adjudicator="first", outcome="negative", recorded_on=after)],
+                     dissents=[dissent()])
+    assert source_states(revised, after)[("NCT1", "press_release_or_filing", TOPLINE)].dissents == {}
+    recited = log_of([adjudicated(adjudicator="first"), adjudicated(adjudicator="first", recorded_on=after + dt.timedelta(days=20))],
+                     dissents=[dissent()], withdrawals=[withdrawn("first", after)])
+    assert source_states(recited, after) [("NCT1", "press_release_or_filing", TOPLINE)].readings == {}
+    later_state = source_states(recited, after + dt.timedelta(days=20))[("NCT1", "press_release_or_filing", TOPLINE)]
+    assert later_state.dissents == {} and later_state.disputed and list(later_state.readings) == ["first"]
+    # With the citation withdrawn and nothing else read, two searches that find nothing leave the trial with no result found.
+    withdrawn_only = log_of([adjudicated(adjudicator="first")], dissents=[dissent()], withdrawals=[withdrawn("first", after)])
+    found = [nothing(on=after), nothing(adjudicator="second", on=after)]
+    assert no_result_found(found, withdrawn_only, after) == {"NCT1": ("first", "second")}
+
+
+def test_a_dissent_is_refused_from_ones_own_reading_from_nothing_and_from_someone_who_saw_the_forecasts(tmp_path):
+    cited, log_file = log_of([adjudicated(adjudicator="first")]), tmp_path / "dissents.jsonl"
+    for refused, log, why in (
+        (dissent(adjudicator="first"), cited, "first has a reading of this source in force"),
+        (dissent(source="https://example.test/nobody-read-this"), cited, "nobody has a reading of this source in force"),
+        (dissent(on=LATER - dt.timedelta(days=1)), cited, "recorded on the day it is made"),
     ):
         with pytest.raises(ValueError, match=why):
-            record_nothing_found(tmp_path / "n.jsonl", refused, cited, LATER)
-    with pytest.raises(ValueError, match="names a source and its type together"):
-        NothingFound(nct="NCT1", adjudicator="second", searched="x", recorded_on=LATER, source=TOPLINE)
+            record_dissent(log_file, refused, log, LATER)
+    opened = log_of([adjudicated(adjudicator="first")], forecast_access=[ForecastAccess(nct="NCT1", person="second", opened_on=LATER)])
+    with pytest.raises(NotBlind, match="second opened the forecasts for NCT1"):
+        record_dissent(log_file, dissent(), opened, LATER)
+    assert not log_file.exists()
+    with pytest.raises(ValueError, match="must say what the source holds"):
+        Dissent(nct="NCT1", adjudicator="second", source_type="press_release_or_filing", source=TOPLINE, reason=" ", recorded_on=LATER)
+    # And a reading of the source waits a day after a dissent, since the log could not tell which came first.
+    with pytest.raises(ValueError, match="found today not to state the result"):
+        require_fits_the_log(adjudicated(adjudicator="first", outcome="negative", recorded_on=LATER),
+                             log_of([adjudicated(adjudicator="first")], dissents=[dissent()]), LATER)
 

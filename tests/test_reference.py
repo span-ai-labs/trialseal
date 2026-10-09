@@ -320,7 +320,7 @@ def test_base_rates_are_frozen_once_and_only_when_fit_to_be(study_dir, capsys):
     figures = json.loads(frozen.read_text())
     assert figures["base_rates"]["industry/overall_survival"] == pytest.approx(20 / 30)
     assert figures["adjudicated"] == 40 and figures["trace_accuracy"]["outcome_matched"] == 40
-    assert sorted(figures["made_from"]) == [
+    assert sorted(name for name, digest in figures["made_from"].items() if digest) == [
         "adjudication/reference/adjudications.jsonl", "adjudication/reference/sample.json",
         "data/readout_trace/rechecks.csv", "data/readout_trace/trace_A.csv"]
     forecaster = base_rate_forecaster(study_dir)
@@ -330,7 +330,22 @@ def test_base_rates_are_frozen_once_and_only_when_fit_to_be(study_dir, capsys):
     # The frozen figures are only as good as what they were made from: a trace edited afterwards is noticed.
     edited = study_dir / "data" / "readout_trace" / "trace_A.csv"
     edited.write_text(edited.read_text().replace("NCT0001,yes,2025-03-01,met", "NCT0001,yes,2025-03-01,not_met"))
-    with pytest.raises(ValueError, match="have since changed or gone: data/readout_trace/trace_A.csv"):
+    with pytest.raises(ValueError, match="have since changed, gone or appeared: data/readout_trace/trace_A.csv"):
+        base_rate_forecaster(study_dir)
+
+
+@pytest.mark.parametrize("appearing", ["adjudication/reference/nothing_found.jsonl", "adjudication/reference/withdrawals.jsonl",
+                                       "adjudication/reference/dissents.jsonl", "data/readout_trace/rechecks_2.csv",
+                                       "data/readout_trace/trace_Z.csv", "screening/design_reviews.jsonl"])
+def test_a_file_the_figures_would_rest_on_that_appears_after_the_freeze_is_noticed(study_dir, appearing):
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    adjudicate(study_dir, drawn_sample(study_dir)["trials"])
+    assert run(study_dir, "freeze") == 0
+    base_rate_forecaster(study_dir)
+    (study_dir / appearing).parent.mkdir(parents=True, exist_ok=True)
+    (study_dir / appearing).write_text("")
+    with pytest.raises(ValueError, match=f"have since changed, gone or appeared: {appearing}"):
         base_rate_forecaster(study_dir)
 
 
@@ -349,15 +364,48 @@ def test_a_sample_drawn_from_fewer_trials_does_not_stand_for_the_reference_set(s
     assert run(study_dir, "freeze") == 0
 
 
-def test_a_sampled_trial_that_leaves_the_reference_set_need_not_be_adjudicated(study_dir, capsys):
+def test_a_trace_re_checked_after_the_draw_stops_the_freeze(study_dir, capsys):
     recheck_the_doubtful_trace(study_dir)
     run(study_dir, "sample")
     sampled = drawn_sample(study_dir)["trials"]
-    adjudicate(study_dir, sampled[1:])
-    # A second look at the first sampled trial finds it has not read out after all: there is nothing to adjudicate.
-    rechecks = study_dir / "data" / "readout_trace" / "rechecks.csv"
-    rechecks.write_text(rechecks.read_text() + f"{sampled[0]},no,,,,,,high\n")
+    contradicted = [nct for nct in sampled if nct != "NCT0030"][:5]
+    adjudicate(study_dir, sampled, contradicting=contradicted)
+    capsys.readouterr()
+    assert run(study_dir, "freeze") == 1 and "outcome right for only 35 of the 40" in capsys.readouterr().out
+    # The five traces are then "re-checked" to say what the adjudicators said. The trace was to be judged as it stood.
+    (study_dir / "data" / "readout_trace" / "rechecks_2.csv").write_text(HEADER + "".join(
+        f"{nct},yes,2025-03-01,{'not_met' if int(nct[3:]) % 3 else 'met'},OS,0.7,2025-03-01,high\n" for nct in contradicted))
+    assert run(study_dir, "freeze") == 1
+    said = capsys.readouterr().out
+    assert "5 trials have been traced or re-checked differently since the sample was drawn" in said and contradicted[0] in said
+
+
+def test_when_the_trace_cannot_be_relied_on_the_adjudicators_read_every_trial(study_dir, capsys):
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    sampled = drawn_sample(study_dir)["trials"]
+    adjudicate(study_dir, sampled, contradicting=sampled[:5])
+    capsys.readouterr()
+    assert run(study_dir, "freeze") == 1
+    # The worklist then holds every traced trial with a result, and the draw itself is not changed.
+    assert run(study_dir, "sample") == 0
+    assert "the trace matched the adjudicators on only 35 of 40, so every traced trial is listed" in capsys.readouterr().out
+    listed = [line.split(",")[0] for line in (study_dir / "adjudication" / "reference" / "worklist.csv").read_text().splitlines()[1:]]
+    assert len(listed) == 54 and drawn_sample(study_dir)["trials"] == sampled
+    adjudicate(study_dir, [nct for nct in listed if nct not in sampled])
+    # With nothing left unread there is no unread trace to rely on, whatever the trace's accuracy was.
     assert run(study_dir, "freeze") == 0
+    figures = json.loads((study_dir / "study" / "base_rates.json").read_text())
+    assert figures["adjudicated"] == 54 and figures["trace_accuracy"]["outcome_matched"] == 49
+
+
+def test_entries_dated_after_today_stop_the_reference_command(study_dir, capsys):
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    for reading in both_adjudicated("NCT0001", "positive", readout=dt.date(2025, 3, 1), recorded_on=TODAY + dt.timedelta(days=1)):
+        records.append(study_dir / "adjudication" / "reference" / "adjudications.jsonl", reading)
+    capsys.readouterr()
+    assert run(study_dir, "report") == 1 and "the log holds an entry dated 2026-10-10, after today" in capsys.readouterr().out
 
 
 def both_found_nothing(study_dir, ncts):

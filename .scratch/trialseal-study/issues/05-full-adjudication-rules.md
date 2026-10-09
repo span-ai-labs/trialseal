@@ -69,3 +69,27 @@ And in the command: one source cannot enter under two spellings of its address o
 - Five trials are on both the reference and the pilot worklists and are read once for each.
 - There is no set yet for trials with sealed forecasts: that needs the readout monitor (ticket 12) to say which trials are due, and the reveal (ticket 16) to write who opened which forecasts.
 - A spreadsheet may turn a quote that begins with `=` into a formula.
+
+**2026-10-09, third review.** A third adversarial pass, aimed at the second round of fixes, confirmed 13 more problems. All are fixed with a failing test first, except the limits listed below.
+
+- *A dissent is now an entry in the log* (`Dissent`, `dissents.jsonl`), not a kind of finding of nothing. Recording that a source the other cited does not state the result makes the source one the two have read differently: if the dissenter later reads it alike, only a reconciliation settles it, and it is left out of first-reading agreement. Before, the two could talk and then "agree" with no reason recorded. A dissent lapses when the cited reading is changed or withdrawn, so a page cited again weeks later goes back on the dissenter's form. The log therefore has a fifth kind of entry, and an analysis record's count of log entries has five numbers.
+- A source is reconciled once: a second reconciliation needs a new reading first. A reading is refused on the day its source was reconciled whoever records it, not only through the command.
+- Withdrawing a reading of a reconciled source reopens it (from the day after the reconciliation), where before it was refused outright and a source about another trial could not be taken back.
+- The frozen base rates record every file they could rest on, including log files that did not exist at the freeze, so one appearing later is noticed.
+- The sample records a mark of how each trial it was drawn from was traced. The freeze refuses if any has been traced or re-checked differently since: a trace changed to match the adjudicators is not the trace they checked.
+- Below nine in ten, `trialseal-reference sample` lists every traced trial, and the freeze goes through once the adjudicators have settled them all.
+- On the form, a row the command filled in is told from one the adjudicator typed by a mark, so a citation the other has withdrawn no longer lingers as if typed. A stale list of disagreements is written afresh; a typed settlement that can still be recorded is not written over.
+- `trialseal-reference` and the pilot report stop on a log entry dated after today, as the adjudicators' command does.
+
+**Rules introduced here, for the protocol.**
+
+5. A source both adjudicators have withdrawn, each with a reason, no longer counts for the trial, even one they had read differently. The trial can then have no result found. The withdrawals are the record of why.
+6. After the sample is drawn, no trace or re-check of a trial it was drawn from may change before the freeze.
+7. If the trace matches the adjudicators on fewer than nine in ten, they read every traced trial and the figures are frozen from their readings.
+
+**Known limits, added.**
+
+- The source type of a source the two have read differently cannot be changed.
+- A trial that has left its worklist and is not in the latest registry snapshot is shown with no title or scored endpoint.
+- The pilot scores a trial the two have read differently on the trace until they settle it; the reference set holds such a trial in doubt.
+- Three passes of review have each found about a dozen or more real problems here. This is the code that guards blindness and it should be read again before the first reveal.

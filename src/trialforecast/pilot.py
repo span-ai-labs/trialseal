@@ -31,7 +31,8 @@ from scipy.stats import chi2, norm
 
 from trialforecast import records, scoring, traces
 from trialforecast.adjudication import (
-    TrialResult, adjudicator_agreement, no_result_found, read_log, read_nothing_found, results,
+    LOG_KINDS, TrialResult, adjudicator_agreement, no_result_found, read_log, read_nothing_found,
+    require_nothing_from_the_future, results,
 )
 from trialforecast.analysis import log_hazard_ratio, scored_hazard_ratio
 from trialforecast.forecasting import BaseRateForecaster, Candidate, Forecast
@@ -695,8 +696,9 @@ def _forecast(run: _Invocation) -> None:
 
 
 def _report(run: _Invocation) -> None:
-    log = read_log(run.root / PILOT_ADJUDICATION)
-    nothing_found = no_result_found(read_nothing_found(run.root / PILOT_ADJUDICATION), log, run.today)
+    log, findings = read_log(run.root / PILOT_ADJUDICATION), read_nothing_found(run.root / PILOT_ADJUDICATION)
+    require_nothing_from_the_future([*findings, *(entry for kind in LOG_KINDS for entry in getattr(log, kind))], run.today)
+    nothing_found = no_result_found(findings, log, run.today)
     trials = with_adjudicated(run.trials, results(log, run.today), run.candidates, run.today, nothing_found)
     pilots, recall_rows, to_adjudicate = [], [], {}
     for spec in run.specs:

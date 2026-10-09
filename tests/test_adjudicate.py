@@ -216,7 +216,7 @@ def test_one_trial_can_have_several_sources_and_several_endpoints(study_dir):
     (dict(hazard_ratio="72"), "hazard ratio 72 is not between 0.05 and 20.0: check the decimal point"),
     (dict(hazard_ratio="nan"), "hazard ratio nan is not between"),
     (dict(nct="NCT0099"), "not on the worklist"),
-    (dict(nothing_found="PubMed"), "a row records a reading or a search that found nothing, not both"),
+    (dict(nothing_found="PubMed"), "a row records a reading or that nothing was found, not both"),
 ])
 def test_a_row_that_cannot_be_a_reading_stops_the_whole_file_and_says_why(study_dir, capsys, typed, why):
     assert reads(study_dir, {"NCT0001": met(), "NCT0002": met(**typed)}) == 1
@@ -429,38 +429,113 @@ def test_a_finding_of_nothing_dated_after_today_stops_the_command(study_dir, cap
     assert run(study_dir, "status") == 1 and "the log holds an entry dated 2026-10-13" in capsys.readouterr().out
 
 
-def test_an_adjudicator_can_find_that_a_cited_source_does_not_state_the_result(study_dir, capsys):
+def test_an_adjudicator_can_dissent_from_a_source_the_other_cited(study_dir, capsys):
     reads(study_dir, {"NCT0001": met()})
     # Ben reads the release Ada cited and finds it reports only a safety review. He says so on its row.
     assert reads(study_dir, {"NCT0001": {"nothing_found": "it reports an interim safety review, not the primary analysis"}},
                  by=BEN) == 0
-    assert "0 readings and 1 finding of nothing recorded for Ben Second" in capsys.readouterr().out
-    finding, = read_nothing_found(study_dir / "adjudication" / "reference")
-    assert finding.about == ("NCT0001", "press_release_or_filing", TOPLINE)
+    assert "0 readings and 1 dissent recorded for Ben Second" in capsys.readouterr().out
+    dissent, = log_of(study_dir).dissents
+    assert (dissent.nct, dissent.adjudicator, dissent.source, dissent.recorded_on) == ("NCT0001", "ben second", TOPLINE, TODAY)
     # The source no longer waits on his form, the two may now talk, and the trial still has no result.
     assert "NCT0001" not in [row["nct"] for row in rows_of(form_of(study_dir, "ben-second"))]
     assert run(study_dir, "status") == 0 and "NCT0001  read differently" in capsys.readouterr().out
     assert run(study_dir, "disagreements") == 0
     assert (f"NCT0001: Ada Reader read {TOPLINE}; Ben Second finds it does not state the result. "
-            "Either the reading is withdrawn, or the source is read by both.") in capsys.readouterr().out
-    assert results(log_of(study_dir), TODAY) == {}
-    # Ada stands by it and Ben reads it after all: he asks for the row again.
+            "Either the reading is withdrawn, or the source is read by both and reconciled.") in capsys.readouterr().out
+    assert results(log_of(study_dir), TODAY) == {} and awaiting_result(log_of(study_dir), TODAY) == {"NCT0001": "disagreement"}
+    # Ada stands by it and Ben reads it after all. He asks for its row again; having talked, they must reconcile it.
+    assert run(study_dir, "form", "--reread", "NCT0001", by=BEN, today=TOMORROW) == 0
+    again, = [row for row in rows_of(form_of(study_dir, "ben-second")) if row["nct"] == "NCT0001"]
+    assert again["source"] == TOPLINE
+    fill(form_of(study_dir, "ben-second"), {"NCT0001": met()})
+    assert run(study_dir, "record", by=BEN, today=TOMORROW) == 0
+    assert results(log_of(study_dir), TOMORROW) == {}
+    assert run(study_dir, "disagreements", today=TOMORROW) == 0
+    fill(working(study_dir, "disagreements.csv"), {"NCT0001": {**SETTLED, "settled_hazard_ratio": "", "settled_hazard_ratio_endpoint": ""}})
+    assert run(study_dir, "reconcile", by=BOTH, today=TOMORROW) == 0
+    assert results(log_of(study_dir), TOMORROW)["NCT0001"].outcome == "positive"
+
+
+def test_a_dissent_and_a_reading_of_one_source_cannot_share_a_file(study_dir, capsys):
+    reads(study_dir, {"NCT0001": met()})
+    dissenting = {"nothing_found": "a safety review only"}
+    for typed in ([dissenting, met()], [met(), dissenting]):
+        assert reads(study_dir, {"NCT0001": typed}, by=BEN) == 1
+        assert "row 3 (NCT0001): this file also" in capsys.readouterr().out
+    assert log_of(study_dir).dissents == () and len(log_of(study_dir).adjudications) == 1
+    # Nor can the day's own reading be dissented from by its author, or a reading follow a dissent on the same day.
+    assert reads(study_dir, {"NCT0001": dissenting}, by=BEN) == 0
     assert run(study_dir, "form", "--reread", "NCT0001", by=BEN) == 0
     fill(form_of(study_dir, "ben-second"), {"NCT0001": met()})
-    assert run(study_dir, "record", by=BEN) == 0
-    assert results(log_of(study_dir), TODAY)["NCT0001"].outcome == "positive"
+    assert run(study_dir, "record", by=BEN) == 1
+    assert "this source was found today not to state the result; a reading of it can be recorded from tomorrow" in capsys.readouterr().out
 
 
-def test_a_source_withdrawn_after_the_other_found_it_empty_leaves_the_trial_to_be_searched(study_dir, capsys):
+def test_a_dissent_does_not_lay_a_trial_open_while_another_source_of_it_is_unread(study_dir, capsys):
+    paper = met(source_type="paper_or_regulator", source="https://example.test/paper", disclosed_on="2026-06-01")
+    reads(study_dir, {"NCT0001": [met(), paper]})
+    reads(study_dir, {("NCT0001", TOPLINE): {"nothing_found": "a safety review only"}}, by=BEN)   # the paper is still unread
+    capsys.readouterr()
+    assert run(study_dir, "status") == 0 and "NCT0001  awaiting the second adjudicator" in capsys.readouterr().out
+    assert run(study_dir, "disagreements") == 0 and "finds it does not state" not in capsys.readouterr().out
+
+
+def test_a_source_withdrawn_after_a_dissent_leaves_the_trial_to_be_searched(study_dir, capsys):
     reads(study_dir, {"NCT0001": met()})
     reads(study_dir, {"NCT0001": {"nothing_found": "a safety review only"}}, by=BEN)
     assert run(study_dir, "withdraw", "--trial", "NCT0001", "--source", TOPLINE, "--reason", "Ben is right") == 0
     capsys.readouterr()
     assert run(study_dir, "status") == 0 and "NCT0001  not yet read" in capsys.readouterr().out
-    # Finding one source empty is not a search of the trial: each still has a blank row for it.
+    # A dissent from one source is not a search of the trial: each still has a blank row for it.
     for who, name in ((ADA, "ada-reader"), (BEN, "ben-second")):
         run(study_dir, "form", by=who)
         assert ("NCT0001", "") in [(row["nct"], row["source"]) for row in rows_of(form_of(study_dir, name))]
+    # Weeks later the same page holds the results and Ada cites it again. Ben's dissent was from what stood before.
+    later = TODAY + dt.timedelta(days=21)
+    assert reads(study_dir, {"NCT0001": met()}, today=later) == 0
+    run(study_dir, "form", by=BEN, today=later)
+    assert ("NCT0001", TOPLINE) in [(row["nct"], row["source"]) for row in rows_of(form_of(study_dir, "ben-second"))]
+
+
+def test_a_citation_the_other_has_withdrawn_does_not_linger_on_ones_form(study_dir):
+    reads(study_dir, {"NCT0001": met()})
+    run(study_dir, "form", by=BEN)
+    assert rows_of(form_of(study_dir, "ben-second"))[0]["source"] == TOPLINE
+    run(study_dir, "withdraw", "--trial", "NCT0001", "--source", TOPLINE, "--reason", "about another trial")
+    assert run(study_dir, "form", by=BEN) == 0
+    assert [(row["nct"], row["source"]) for row in rows_of(form_of(study_dir, "ben-second"))][0] == ("NCT0001", "")
+    # A row the adjudicator copied from a given one and typed another address into is theirs, and is kept.
+    reads(study_dir, {"NCT0002": met(source="https://example.test/y")})
+    run(study_dir, "form", by=BEN)
+    fill(form_of(study_dir, "ben-second"), {"NCT0002": [None, {"source": "https://example.test/another"}]})
+    assert run(study_dir, "form", by=BEN) == 0
+    assert [row["source"] for row in rows_of(form_of(study_dir, "ben-second")) if row["nct"] == "NCT0002"] == [
+        "https://example.test/y", "https://example.test/another"]
+
+
+def test_a_row_for_a_trial_off_the_worklist_stops_the_form_being_recorded_at_all(study_dir, capsys):
+    run(study_dir, "form")
+    fill(form_of(study_dir), {"NCT0001": met(), "NCT0002": {"nct": "NCT0022", "source_type": "conference", "source": "https://example.test/z"}})
+    capsys.readouterr()
+    assert run(study_dir, "record") == 1
+    said = capsys.readouterr().out
+    assert "row 3 gives a source for NCT0022, which is not on the worklist" in said and "recorded for" not in said
+    assert log_of(study_dir).adjudications == ()
+
+
+def test_a_trial_with_only_findings_of_nothing_that_left_the_worklist_is_still_shown(study_dir, capsys):
+    for who in (ADA, BEN):
+        reads(study_dir, {"NCT0003": {"nothing_found": "registry, PubMed"}}, by=who)
+    worklist = study_dir / "adjudication" / "reference" / "worklist.csv"
+    worklist.write_text(worklist.read_text().replace("NCT0003,,A Study of Z,Overall survival\n", ""))
+    capsys.readouterr()
+    assert run(study_dir, "status") == 0
+    assert "NCT0003  no result found  (no longer on the worklist)" in capsys.readouterr().out
+    run(study_dir, "form")
+    assert "NCT0003" not in [row["nct"] for row in rows_of(form_of(study_dir))]
+    run(study_dir, "form", "--reread", "NCT0003")
+    assert ("NCT0003", "") in [(row["nct"], row["source"]) for row in rows_of(form_of(study_dir))]
 
 
 # --- changing one's mind -----------------------------------------------------------------------------
@@ -634,6 +709,60 @@ def test_a_list_of_disagreements_is_settled_once_and_against_the_readings_it_sho
     assert log_of(study_dir).reconciliations == ()
 
 
+def test_a_list_whose_settlement_no_longer_fits_the_readings_is_written_afresh(study_dir, capsys):
+    disagreements = a_disagreement(study_dir)
+    fill(disagreements, {"NCT0001": SETTLED})
+    run(study_dir, "form", "--reread", "NCT0001", by=BEN)
+    fill(form_of(study_dir, "ben-second"), {"NCT0001": met(hazard_ratio="0.75", disclosed_on="2026-03-02")})
+    assert run(study_dir, "record", "--revise", by=BEN) == 0
+    capsys.readouterr()
+    assert run(study_dir, "reconcile", by=BOTH) == 1 and "run disagreements again" in capsys.readouterr().out
+    assert run(study_dir, "disagreements") == 0                                # which it now can be
+    row, = rows_of(disagreements)
+    assert (row["second_hazard_ratio"], row["settled_outcome"]) == ("0.75", "")
+
+
+def test_a_typed_settlement_is_not_written_over_when_its_trial_gains_a_source(study_dir, capsys):
+    disagreements = a_disagreement(study_dir)
+    fill(disagreements, {"NCT0001": SETTLED})
+    reads(study_dir, {"NCT0003": met(nct="NCT0001", source_type="paper_or_regulator", source="https://example.test/paper")})
+    capsys.readouterr()
+    assert run(study_dir, "disagreements") == 1
+    assert "holds 1 reconciliation not yet recorded" in capsys.readouterr().out
+    assert run(study_dir, "reconcile", by=BOTH) == 0 and len(log_of(study_dir).reconciliations) == 1
+
+
+def test_a_reconciled_source_listed_again_with_something_else_is_refused(study_dir, capsys):
+    disagreements = a_disagreement(study_dir)
+    fill(disagreements, {"NCT0001": SETTLED})
+    run(study_dir, "reconcile", by=BOTH)
+    fill(disagreements, {"NCT0001": {"settled_hazard_ratio": "0.78", "reason": "on reflection"}})
+    capsys.readouterr()
+    assert run(study_dir, "reconcile", by=BOTH) == 1
+    assert "not one the two adjudicators have read differently and not yet reconciled" in capsys.readouterr().out
+    assert len(log_of(study_dir).reconciliations) == 1
+
+
+def test_a_trial_is_held_back_whichever_of_them_has_the_source_still_to_read(study_dir, capsys):
+    paper = met(source_type="paper_or_regulator", source="https://example.test/paper", disclosed_on="2026-06-01")
+    reads(study_dir, {"NCT0001": met(hazard_ratio="0.72")})
+    reads(study_dir, {("NCT0001", TOPLINE): met(hazard_ratio="0.78"), "NCT0002": {**paper, "nct": "NCT0001"}}, by=BEN)
+    capsys.readouterr()                                                          # here it is Ada who has not read the paper
+    assert run(study_dir, "disagreements") == 0
+    assert "0 sources read differently" in capsys.readouterr().out
+
+
+def test_the_mark_on_a_list_covers_both_readings_and_everything_in_them(study_dir, capsys):
+    disagreements = a_disagreement(study_dir)
+    fill(disagreements, {"NCT0001": SETTLED})
+    # The second-named adjudicator puts right nothing but the quote. The list no longer shows what is in force.
+    run(study_dir, "form", "--reread", "NCT0001", by=BEN)
+    fill(form_of(study_dir, "ben-second"), {"NCT0001": met(hazard_ratio="0.78", disclosed_on="2026-03-02", original_text="Other words.")})
+    assert run(study_dir, "record", "--revise", by=BEN) == 0
+    capsys.readouterr()
+    assert run(study_dir, "reconcile", by=BOTH) == 1 and "the readings have changed" in capsys.readouterr().out
+
+
 def test_a_trial_is_not_laid_open_while_one_of_them_has_a_source_still_to_read(study_dir, capsys):
     paper = met(source_type="paper_or_regulator", source="https://example.test/paper", disclosed_on="2026-06-01")
     reads(study_dir, {"NCT0001": [met(hazard_ratio="0.72"), paper]})
@@ -671,7 +800,7 @@ def test_a_reconciled_source_is_reopened_by_a_new_reading_and_not_on_the_same_da
     assert run(study_dir, "reconcile", by=BOTH) == 0
     capsys.readouterr()
     withdrawing = ("withdraw", "--trial", "NCT0001", "--source", TOPLINE, "--reason", "second thoughts")
-    assert run(study_dir, *withdrawing, by=BEN) == 1 and "has been reconciled" in capsys.readouterr().out
+    assert run(study_dir, *withdrawing, by=BEN) == 1 and "was reconciled today" in capsys.readouterr().out
     run(study_dir, "form", "--reread", "NCT0001")
     fill(form_of(study_dir), {"NCT0001": met(endpoint_results="not_met")})
     assert run(study_dir, "record", "--revise") == 1

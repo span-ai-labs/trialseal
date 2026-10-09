@@ -320,7 +320,7 @@ def test_one_trial_travels_from_snapshot_to_score(tmp_path, monkeypatch):
     # Two adjudicators record the same outcome.
     adjudication_log = tmp_path / "adjudication.jsonl"
     for adjudication in both_adjudicated("NCT1", "positive"):
-        record_adjudication(adjudication_log, adjudication, forecast_access=[], today=adjudication.recorded_on)
+        record_adjudication(adjudication_log, adjudication, AdjudicationLog(), today=adjudication.recorded_on)
     adjudications = records.read(adjudication_log, Adjudication)
     assert adjudications == both_adjudicated("NCT1", "positive")
 
