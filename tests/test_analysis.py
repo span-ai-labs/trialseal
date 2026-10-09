@@ -10,7 +10,7 @@ from study_records import (
     adjudicated, base_rate, both_adjudicated, candidate, keys_anywhere, screened,
 )
 from trialforecast import analysis, records, scoring
-from trialforecast.adjudication import AdjudicationLog, ForecastAccess, Reconciliation, Withdrawal
+from trialforecast.adjudication import AdjudicationLog, Dissent, ForecastAccess, Reconciliation, Withdrawal
 from trialforecast.analysis import (
     ALL_SPONSORS, DESCRIPTIVE_LOOK_ON, AlreadyRun, AnalysisRecord, NotDue, NotReady, by_forecaster_version,
     by_lead_time, descriptive_look, effect_size_comparison, final_analysis, forecaster_scores, model_table, paired,
@@ -576,13 +576,25 @@ def test_every_kind_of_log_entry_is_part_of_what_the_final_analysis_was_run_on(t
     withdrawn = Withdrawal(nct="NCT0001", adjudicator="first", source_type="press_release_or_filing",
                            source="https://example.test/wrong-trial", reason="about another trial", recorded_on=dt.date(2027, 8, 2))
     opened = ForecastAccess(nct="NCT0001", person="first", opened_on=dt.date(2028, 4, 1))
-    whole = AdjudicationLog([*log.adjudications, mistaken], withdrawals=[withdrawn], forecast_access=[opened])
+    dissent = Dissent(nct="NCT0001", adjudicator="second", source_type="press_release_or_filing",
+                      source="https://example.test/wrong-trial", reason="about another trial", recorded_on=dt.date(2027, 8, 1))
+    whole = AdjudicationLog([*log.adjudications, mistaken], withdrawals=[withdrawn], forecast_access=[opened], dissents=[dissent])
     record_file = tmp_path / "analyses.jsonl"
-    run_final((batches, whole), EIGHTEEN_MONTHS, record_file)
+    final = run_final((batches, whole), EIGHTEEN_MONTHS, record_file)
     for kind, changed in (("withdrawals", dataclasses.replace(withdrawn, reason="another reason")),
-                          ("forecast_access", dataclasses.replace(opened, opened_on=dt.date(2028, 4, 2)))):
+                          ("forecast_access", dataclasses.replace(opened, opened_on=dt.date(2028, 4, 2))),
+                          ("dissents", dataclasses.replace(dissent, reason="another reason"))):
         with pytest.raises(AlreadyRun):
             run_final((batches, dataclasses.replace(whole, **{kind: [changed]})), EIGHTEEN_MONTHS, record_file)
+    # A dissent dated before the run and put into the log after it is noticed; one made after the run is left out
+    # of the regenerated analysis, which is still what it was.
+    later = EIGHTEEN_MONTHS + dt.timedelta(days=9)
+    back_dated = dataclasses.replace(dissent, nct="NCT0002", source="https://example.test/topline")
+    with pytest.raises(AlreadyRun, match="dated before"):
+        run_final((batches, dataclasses.replace(whole, dissents=[dissent, back_dated])), later, record_file)
+    made_since = dataclasses.replace(dissent, nct="NCT0003", adjudicator="third", source="https://example.test/topline",
+                                     recorded_on=later)
+    assert run_final((batches, dataclasses.replace(whole, dissents=[dissent, made_since])), later, record_file) == final
 
 
 def test_two_reconciliations_recorded_in_another_order_are_not_the_log_the_analysis_was_run_on(tmp_path):

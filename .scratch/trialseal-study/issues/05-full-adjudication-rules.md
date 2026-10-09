@@ -95,3 +95,23 @@ And in the command: one source cannot enter under two spellings of its address o
 - Three passes of review have each found about a dozen or more real problems here. This is the code that guards blindness and it should be read again before the first reveal.
 
 **2026-10-09, decided.** The study lead said to take the open decisions on his behalf. Rules 1 to 7 above stand, including rule 5: a source both adjudicators withdraw, each with a reason, no longer counts for the trial. `study/adjudicators.json` now names both adjudicators.
+
+**2026-10-09, fourth review.** A fourth adversarial pass confirmed 13 more problems. The replay held: 7,600 random sequences of 18 to 24 command steps, with dissents, gave no divergence from a model applying the steps in real order, no unreplayable log and no failed command. The problems were in what surrounds it. Fixed with a failing test first:
+
+- *A source first read while the two differ on another source of the trial* is disputed from the start, so matching readings of it do not settle the trial without a reconciliation, and it is left out of first-reading agreement. They may have talked about the trial by then. A new source for a trial is refused on the day the two first differ on it, since the log could not tell whether it came before the talk or after.
+- A dissent made after its author's own first reading no longer hides that the first readings differed. A dissent stands through a quote put right and lapses on a changed reading. A dissent waits a day after its author withdrew their own reading of the source, and is allowed on a later source after a reveal wherever a reading would be (ADR-0015).
+- A reconciliation typed wrongly can be put right by a second one, recorded on purpose (`disagreements --reread`, `reconcile --revise`); both stay in the log. The third review's "a source is reconciled once" is withdrawn: it left no way to correct a slip.
+- A list of disagreements written again keeps the typed settlements that still fit their readings and says which it dropped.
+- Both reports state how many sources were counted apart as not read independently.
+- A DOI is one source however it is written.
+
+**Decided on the study lead's behalf.**
+
+8. For each list one adjudicator goes first and the other reads what the first cited: the first name in `study/adjudicators.json` for the reference trials, the second for the pilot. This keeps one paper from entering under two addresses.
+9. Rule 7 means every trial traced as having a result (read out or void), not the trials traced with no readout. A readout the trace missed is not caught by this.
+10. Two adjudicators may tell each other two things about a trial before it is laid open, and no more: that one has withdrawn a named source, and that one thinks a named source has the wrong type.
+
+**Known limits, added.**
+
+- The code is not among what a draw or a freeze records. The list of companies the registry classes otherwise, for one, is in the code; the commit of the freeze is its record.
+- Tests named for the newest behaviours were again found to pass with the behaviour broken in several places; the ones the review named now have tests. Four passes of review have each found a dozen or more problems, the last in the freeze, not the rules. Read this again before the first reveal.

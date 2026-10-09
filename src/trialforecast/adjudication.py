@@ -357,6 +357,10 @@ class SourceState:
 
     readings: dict[str, Adjudication] = field(default_factory=dict)  # each adjudicator's current reading
     disputed: bool = False  # once two adjudicators have differed, only a reconciliation settles it
+    disputed_on: dt.date | None = None  # the day they first differed
+    # First read while the two differed on another source of the trial, when they may have talked about the trial:
+    # its readings were not made independently, so it is disputed from the start.
+    after_talk: bool = False
     reconciliation: Reconciliation | None = None
     dissents: dict[str, Dissent] = field(default_factory=dict)  # who finds, of the readings in force, that it states no result
 
@@ -378,6 +382,13 @@ def _first_opened(log: AdjudicationLog) -> dict[tuple[str, str], dt.date]:
 
 def _saw_forecasts_first(opened: dict, nct: str, who: Iterable[str], recorded_on: dt.date) -> list[str]:
     return [name for name in who if (nct, name) in opened and opened[(nct, name)] <= recorded_on]
+
+
+def _differing_since(sources: dict, nct: str, before: dt.date | None = None, on: dt.date | None = None) -> bool:
+    """Whether the trial has a source its adjudicators differ on and have not reconciled, since before a day or from a day."""
+    return any(key[0] == nct and source.disputed and source.reconciliation is None
+               and ((before is not None and source.disputed_on < before) or source.disputed_on == on)
+               for key, source in sources.items())
 
 
 def _replay(
@@ -402,22 +413,30 @@ def _replay(
     for entry in entries:
         key = (entry.nct, entry.source_type, entry.source)
         if isinstance(entry, Adjudication):
-            source = sources.setdefault(key, SourceState())
+            if key not in sources:
+                sources[key] = SourceState()
+                if _differing_since(sources, entry.nct, before=entry.recorded_on):
+                    sources[key].disputed = sources[key].after_talk = True
+                    sources[key].disputed_on = entry.recorded_on
+            source = sources[key]
             earlier = source.readings.get(entry.adjudicator)
+            changed = earlier is None or what_was_read(earlier) != what_was_read(entry)
             source.readings[entry.adjudicator] = entry
             # A reading entered after a reconciliation reopens the source, unless it only puts a quote right.
-            if earlier is None or what_was_read(earlier) != what_was_read(entry):
+            if changed:
                 source.reconciliation = None
-            if len({what_was_read(a) for a in source.readings.values()}) > 1:
-                source.disputed = True
-            # A dissent is from the readings as they stood. Its author has now read the source; or another reading
-            # has been made, which they have not seen the source against.
-            source.dissents.clear()
+            if len({what_was_read(a) for a in source.readings.values()}) > 1 and not source.disputed:
+                source.disputed, source.disputed_on = True, entry.recorded_on
+            # A dissent is from the readings as they stood. A new or changed reading is one its author has not seen
+            # the source against; and once they read the source themselves it is no longer a dissent.
+            if changed:
+                source.dissents.clear()
         elif isinstance(entry, Dissent):
             source = sources.get(key)
             if source is None or not source.readings or entry.adjudicator in source.readings:
                 raise ValueError(f"{entry.nct}: {entry.adjudicator} has nobody else's reading of {entry.source!r} to dissent from")
-            source.disputed = True  # the two differ on whether it states a result at all
+            if not source.disputed:  # the two differ on whether it states a result at all
+                source.disputed, source.disputed_on = True, entry.recorded_on
             source.dissents[entry.adjudicator] = entry
         elif isinstance(entry, Withdrawal):
             if key not in sources or entry.adjudicator not in sources[key].readings:
@@ -432,8 +451,7 @@ def _replay(
                     del sources[key]
         else:
             source = sources.get(key)
-            if (source is None or not source.disputed or source.reconciliation is not None
-                    or set(entry.adjudicators) != set(source.readings)):
+            if source is None or not source.disputed or set(entry.adjudicators) != set(source.readings):
                 raise ValueError(
                     f"{entry.nct}: the reconciliation of {entry.source!r} does not settle a recorded "
                     f"disagreement between its adjudicators"
@@ -711,7 +729,9 @@ def require_fits_the_log(adjudication: Adjudication, log: AdjudicationLog, today
     beside the withdrawn one; one made on the day the source was reconciled
     would be replayed before the reconciliation and not reopen it; and one made
     on the day of a dissent would be replayed as if the dissent were from it.
-    Each waits a day.
+    Each waits a day. So does a new source for a trial on the day its
+    adjudicators first differed on another: the log could not tell whether it
+    was read before the two talked or after, and after is not independent.
     """
     source = (adjudication.nct, adjudication.source_type, adjudication.source)
 
@@ -725,6 +745,10 @@ def require_fits_the_log(adjudication: Adjudication, log: AdjudicationLog, today
     if today_holds(log.dissents):
         raise ValueError(f"{adjudication.nct}: this source was found today not to state the result; a reading of it "
                          f"can be recorded from tomorrow")
+    sources = source_states(log, today)
+    if source not in sources and _differing_since(sources, adjudication.nct, on=today):
+        raise ValueError(f"{adjudication.nct}: a source of this trial was first read differently today; a new source for "
+                         f"it can be recorded from tomorrow")
 
 
 def require_dissent_recordable(dissent: Dissent, log: AdjudicationLog, today: dt.date) -> None:
@@ -737,7 +761,14 @@ def require_dissent_recordable(dissent: Dissent, log: AdjudicationLog, today: dt
     if source is None or not source.readings:
         raise ValueError(f"{dissent.nct}: nobody has a reading of this source in force, so there is nothing to differ "
                          f"with; a source that states no result is simply not recorded")
-    if _saw_forecasts_first(_first_opened(log), dissent.nct, [dissent.adjudicator], dissent.recorded_on):
+    if any((w.nct, w.adjudicator, w.source_type, w.source, w.recorded_on) ==
+           (dissent.nct, dissent.adjudicator, dissent.source_type, dissent.source, today) for w in log.withdrawals):
+        # Entries of a day are replayed dissents before withdrawals, so it would be a dissent from one's own reading.
+        raise ValueError(f"{dissent.nct}: you withdrew your reading of this source today; a dissent from it can be "
+                         f"recorded from tomorrow")
+    # Like a reading: someone who has opened the forecasts may only take up a source disclosed after they opened them.
+    opened = _first_opened(log).get((dissent.nct, dissent.adjudicator))
+    if opened is not None and opened <= today and any(r.disclosed_on <= opened for r in source.readings.values()):
         raise NotBlind(f"{dissent.adjudicator} opened the forecasts for {dissent.nct} before reading this source")
     source_states(log.with_entry(dissent), today)  # whatever else the replay would refuse
 
@@ -842,9 +873,10 @@ def adjudicator_agreement(log: AdjudicationLog) -> dict:
     """How often the two adjudicators' first readings of a source agreed.
 
     First readings are compared, before any correction or reconciliation, since
-    those are what two people reached independently. A source one of them first
-    found not to state the result is counted apart: whatever they read in it
-    later was not read independently. Cohen's kappa is given for
+    those are what two people reached independently. Two kinds of source are
+    counted apart, since their readings were not independent: one that an
+    adjudicator dissented from before ever reading it, and one first read while
+    the two differed on another source of the trial. Cohen's kappa is given for
     the outcome, and is undefined when both called every source the same way.
     Hazard ratios are compared wherever either recorded one, and agree when they
     name the same endpoint and match to two decimal places. A source read by one
@@ -853,9 +885,14 @@ def adjudicator_agreement(log: AdjudicationLog) -> dict:
     first: dict[tuple, dict[str, object]] = {}
     for reading in sorted(log.adjudications, key=lambda a: a.recorded_on):  # a stable sort: log order breaks ties
         first.setdefault((reading.nct, reading.source_type, reading.source), {}).setdefault(reading.adjudicator, reading)
-    dissented = {(d.nct, d.source_type, d.source) for d in log.dissents}
+    # A dissent made before its author ever read the source: whatever they read in it later followed the dissent.
+    dissented = {(d.nct, d.source_type, d.source) for d in log.dissents
+                 if not (first.get((d.nct, d.source_type, d.source), {}).get(d.adjudicator) is not None
+                         and first[(d.nct, d.source_type, d.source)][d.adjudicator].recorded_on < d.recorded_on)}
+    after_talk = {source for source, state in _replay(log, dt.date.max)[0].items() if state.after_talk} - dissented
+    apart = dissented | after_talk
     pairs = [tuple(by_adjudicator[name] for name in sorted(by_adjudicator))
-             for source, by_adjudicator in first.items() if len(by_adjudicator) == 2 and source not in dissented]
+             for source, by_adjudicator in first.items() if len(by_adjudicator) == 2 and source not in apart]
     agreed = sum(a.outcome == b.outcome for a, b in pairs)
     with_ratio = [(a, b) for a, b in pairs if a.hazard_ratio is not None or b.hazard_ratio is not None]
 
@@ -872,7 +909,8 @@ def adjudicator_agreement(log: AdjudicationLog) -> dict:
         by_chance = sum(sum(a.outcome == o for a, _ in pairs) * sum(b.outcome == o for _, b in pairs)
                         for o in outcomes) / len(pairs) ** 2
         kappa = None if by_chance == 1 else (observed - by_chance) / (1 - by_chance)
-    return {"sources": len(pairs), "not_read_by_two": sum(len(by) != 2 for source, by in first.items() if source not in dissented),
-            "one_found_no_result_stated": len(dissented), "outcome_agreed": agreed, "kappa": kappa,
+    return {"sources": len(pairs), "not_read_by_two": sum(len(by) != 2 for source, by in first.items() if source not in apart),
+            "one_found_no_result_stated": len(dissented), "read_after_the_two_had_talked": len(after_talk),
+            "outcome_agreed": agreed, "kappa": kappa,
             "disclosure_date_agreed": sum(a.disclosed_on == b.disclosed_on for a, b in pairs),
             "hazard_ratio_compared": len(with_ratio), "hazard_ratio_agreed": sum(same_ratio(a, b) for a, b in with_ratio)}

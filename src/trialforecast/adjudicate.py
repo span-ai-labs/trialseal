@@ -269,9 +269,10 @@ def _address_key(source: str) -> str:
     The scheme, a leading "www.", the case of the host, a trailing slash, and a
     fragment that is a place on the page. It catches slips, not evasions.
     """
+    doi = re.match(r"(?:https?://)?(?:www\.|dx\.)?doi\.org/(.+)$|doi:\s*(.+)$|(10\.\d{4,9}/.+)$", source.strip(), flags=re.IGNORECASE)
+    if doi:  # a DOI is the same paper however it is written, and in any case
+        return "doi:" + next(part for part in doi.groups() if part).split("#")[0].rstrip("/").casefold()
     host, _, rest = re.sub(r"^https?://", "", source.strip(), flags=re.IGNORECASE).partition("/")
-    if host.casefold().startswith("doi:") or host.casefold() in ("doi.org", "dx.doi.org"):
-        return "doi:" + (host.casefold().removeprefix("doi:") + "/" + rest if host.casefold().startswith("doi:") else rest).casefold()
     path, _, fragment = rest.partition("#")
     if fragment.startswith(("/", "!")):  # a fragment some sites use as the page's own address
         path = f"{path}#{fragment}"
@@ -544,31 +545,47 @@ def _as_listed(state: SourceState) -> str:
     return "r-" + hashlib.sha256(both.encode()).hexdigest()[:12]
 
 
-def disagreements(study: _Study) -> int:
+def _reconcilable(state: SourceState | None) -> bool:
+    return state is not None and state.disputed and len(state.readings) == 2
+
+
+def disagreements(study: _Study, reopen: Iterable[str] = ()) -> int:
     """Lay the two readings of every source read differently side by side, with cells for what the pair settle on.
 
     A trial with a source that one of them has still to read is held back: its
     readings are not shown to either until both have read everything cited. A
     source that one read and the other dissents from cannot be reconciled,
-    having one reading; it is named, for the two to resolve.
+    having one reading; it is named, for the two to resolve. A settlement
+    already typed is kept if the readings it was typed against still stand, and
+    dropped, with a word to say so, if they have changed. Trials named to be
+    reopened have their reconciled sources listed again, to put a slip right.
     """
     path, (read_differently, dissented) = _disagreements_path(study), _laid_open(study)
+    listed = {**read_differently, **{key: state for key, state in study.sources.items()
+                                     if key[0] in reopen and state.reconciliation is not None and _reconcilable(state)}}
+    typed, dropped = {}, []
     if path.exists():
-        # A settlement typed against readings that have since changed can no longer be recorded, so it is not kept.
-        still = {key: _as_listed(state) for key, state in _in_disagreement(study).items()}
-        unrecorded = [row for _, row in _rows(path, DISAGREEMENT_COLUMNS, "a list of disagreements")
-                      if _filled(row, SETTLED) and still.get((row["nct"], row["source_type"], row["source"])) == row[AS_LISTED]]
-        if unrecorded:
-            raise ValueError(f"{path} holds {counted(len(unrecorded), 'reconciliation')} not yet recorded; "
-                             f"run reconcile, or delete the file")
+        for _, row in _rows(path, DISAGREEMENT_COLUMNS, "a list of disagreements"):
+            key = (row["nct"], row["source_type"], row["source"])
+            state = study.sources.get(key)
+            if not _filled(row, SETTLED) or (state is not None and state.reconciliation is not None and key not in listed):
+                continue  # nothing typed, or typed and since recorded
+            if _reconcilable(state) and row[AS_LISTED] == _as_listed(state):
+                typed[key] = [row[cell] for cell in SETTLED]
+                listed.setdefault(key, state)  # shown to them before; kept though its trial has since gained a source
+            else:
+                dropped.append(f"{key[0]} ({key[2]})")
     rows = [(nct, study.trials.get(nct, {}).get("title"), study.trials.get(nct, {}).get("scored_endpoint"), source_type,
              source, *(cell for _, reading in sorted(state.readings.items()) for cell in _cells(reading)), _as_listed(state),
-             *[""] * len(SETTLED))
-            for (nct, source_type, source), state in sorted(read_differently.items())]
+             *typed.get((nct, source_type, source), [""] * len(SETTLED)))
+            for (nct, source_type, source), state in sorted(listed.items())]
     write_table(path, DISAGREEMENT_COLUMNS, rows)
-    held_back = len(_in_disagreement(study)) - len(rows)
+    held_back = len(_in_disagreement(study).keys() - listed.keys())
     print(f"{counted(len(rows), 'source')} read differently, listed in {path}"
           + (f"; {held_back} more wait until both have read every source of their trial" if held_back else ""))
+    if dropped:
+        print(f"{counted(len(dropped), 'settlement')} typed in the old list no longer fit the readings and were dropped: "
+              f"{', '.join(dropped)}")
     for (nct, source_type, source), who in sorted(dissented.items()):
         reader = " and ".join(study.named(name) for name in sorted(study.sources[(nct, source_type, source)].readings))
         print(f"{nct}: {reader} read {source}; {' and '.join(study.named(name) for name in who)} finds it does not state "
@@ -576,11 +593,15 @@ def disagreements(study: _Study) -> int:
     return 0
 
 
-def reconcile(study: _Study, adjudicators: list[str]) -> int:
-    """Record what the two adjudicators settled for each source they read differently, with their reason, or nothing."""
+def reconcile(study: _Study, adjudicators: list[str], revise: bool) -> int:
+    """Record what the two adjudicators settled for each source they read differently, with their reason, or nothing.
+
+    A source already reconciled is settled again only when they say so, to put
+    a slip right; both reconciliations stay in the log and the later one stands.
+    """
     if len(set(adjudicators)) != 2:
         raise ValueError("a reconciliation is recorded by both adjudicators: give --by twice, once for each")
-    path, read_differently = _disagreements_path(study), _in_disagreement(study)
+    path = _disagreements_path(study)
     if not path.exists():
         raise ValueError(f"there is no list of disagreements at {path}; run disagreements first")
     log, seen = study.log, set()
@@ -602,14 +623,17 @@ def reconcile(study: _Study, adjudicators: list[str]) -> int:
         if key in seen:
             raise ValueError("the same source is settled twice in this file")
         seen.add(key)
-        recorded = study.sources[key].reconciliation if key in study.sources else None
+        state = study.sources.get(key)
+        recorded = state.reconciliation if state is not None else None
         if recorded is not None and dataclasses.replace(recorded, recorded_on=study.today) == settled:
             return None  # recorded by an earlier run of this file
-        if key not in read_differently:
-            raise ValueError("this source is not one the two adjudicators have read differently and not yet reconciled")
-        if set(adjudicators) != set(read_differently[key].readings):
-            raise ValueError(f"it is settled by the two who read it, {' and '.join(sorted(read_differently[key].readings))}")
-        if row[AS_LISTED] != _as_listed(read_differently[key]):
+        if not _reconcilable(state):
+            raise ValueError("this source is not one the two adjudicators have both read, and read differently")
+        if recorded is not None and not revise:
+            raise ValueError(f"this source was reconciled on {recorded.recorded_on}; reconcile with --revise to replace that")
+        if set(adjudicators) != set(state.readings):
+            raise ValueError(f"it is settled by the two who read it, {' and '.join(sorted(state.readings))}")
+        if row[AS_LISTED] != _as_listed(state):
             raise ValueError("the readings have changed since this list was written; run disagreements again")
         require_reconcilable(settled, log, study.today)
         log = log.with_reconciliation(settled)
@@ -645,9 +669,11 @@ def main(arguments: list[str] | None = None, today: dt.date | None = None) -> in
     parser.add_argument("--set", required=True, choices=tuple(SETS), help="which trials are being adjudicated")
     parser.add_argument("--by", action="append", default=[], help="the adjudicator's name; twice for reconcile")
     parser.add_argument("--reread", action="append", default=[], metavar="NCT",
-                        help="for form: also give a row for each source you have already read for this trial")
+                        help="for form: also give a row for each source you have already read for this trial; "
+                             "for disagreements: also list this trial's reconciled sources")
     parser.add_argument("--revise", action="store_true",
-                        help="for record: replace a reading of yours that the form reads differently")
+                        help="for record: replace a reading of yours that the form reads differently; "
+                             "for reconcile: replace a reconciliation already recorded")
     parser.add_argument("--trial", default="", metavar="NCT", help="for withdraw: the trial's registry number")
     parser.add_argument("--source", default="", help="for withdraw: the address of the source")
     parser.add_argument("--source-type", default="", choices=("", *SOURCE_TYPES),
@@ -661,12 +687,12 @@ def main(arguments: list[str] | None = None, today: dt.date | None = None) -> in
         if options.step == "status":
             return status(study)
         if options.step == "disagreements":
-            return disagreements(study)
+            return disagreements(study, options.reread)
         by = [_adjudicator(study, name) for name in options.by]
         if options.step != "form":
             _require_open(study)
         if options.step == "reconcile":
-            return reconcile(study, by)
+            return reconcile(study, by, options.revise)
         if len(by) != 1:
             parser.error(f"{options.step} needs --by with one adjudicator's name")
         if options.step == "form":

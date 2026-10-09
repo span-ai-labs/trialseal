@@ -389,14 +389,131 @@ def test_when_the_trace_cannot_be_relied_on_the_adjudicators_read_every_trial(st
     assert run(study_dir, "freeze") == 1
     # The worklist then holds every traced trial with a result, and the draw itself is not changed.
     assert run(study_dir, "sample") == 0
-    assert "the trace matched the adjudicators on only 35 of 40, so every traced trial is listed" in capsys.readouterr().out
-    listed = [line.split(",")[0] for line in (study_dir / "adjudication" / "reference" / "worklist.csv").read_text().splitlines()[1:]]
+    assert "the trace matched the adjudicators on only 35 of the 40 sampled, so every traced trial is listed" in capsys.readouterr().out
+    worklist = study_dir / "adjudication" / "reference" / "worklist.csv"
+    listed = [line.split(",")[0] for line in worklist.read_text().splitlines()[1:]]
     assert len(listed) == 54 and drawn_sample(study_dir)["trials"] == sampled
-    adjudicate(study_dir, [nct for nct in listed if nct not in sampled])
+    # Reading ten more that agree with the trace does not buy the rest: it was the sample that judged the trace.
+    rest = [nct for nct in listed if nct not in sampled]
+    adjudicate(study_dir, rest[:10])
+    assert run(study_dir, "freeze") == 1
+    assert "have not settled 4 of the 54 trials" in capsys.readouterr().out
+    assert run(study_dir, "sample") == 0 and len(worklist.read_text().splitlines()) == 55
+    adjudicate(study_dir, rest[10:])
     # With nothing left unread there is no unread trace to rely on, whatever the trace's accuracy was.
     assert run(study_dir, "freeze") == 0
     figures = json.loads((study_dir / "study" / "base_rates.json").read_text())
     assert figures["adjudicated"] == 54 and figures["trace_accuracy"]["outcome_matched"] == 49
+
+
+def test_nine_in_ten_of_the_sample_is_enough_and_one_fewer_is_not(study_dir, capsys):
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    sampled = drawn_sample(study_dir)["trials"]
+    adjudicate(study_dir, sampled, contradicting=sampled[:4])                # 36 of 40
+    assert run(study_dir, "sample") == 0
+    assert len((study_dir / "adjudication" / "reference" / "worklist.csv").read_text().splitlines()) == 41
+    assert run(study_dir, "freeze") == 0
+
+
+def test_the_sample_is_not_drawn_again_once_the_adjudicators_have_begun(study_dir, capsys):
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    adjudicate(study_dir, drawn_sample(study_dir)["trials"][:1])
+    (study_dir / "adjudication" / "reference" / "sample.json").unlink()
+    capsys.readouterr()
+    assert run(study_dir, "sample") == 1
+    assert "the adjudicators have begun" in capsys.readouterr().out
+    assert not (study_dir / "adjudication" / "reference" / "sample.json").exists()
+
+
+@pytest.mark.parametrize("tampered, why", [
+    (lambda drawn: drawn.update(trials=[]), "is not the draw of 40 from the trials it names"),
+    (lambda drawn: drawn.update(trials=drawn["trials"][1:] + [next(n for n in drawn["drawn_from"] if n not in drawn["trials"])]),
+     "is not the draw of 40 from the trials it names"),
+    (lambda drawn: drawn.update(seed=1), "is not the draw of 40 from the trials it names"),
+])
+def test_a_sample_file_that_is_not_the_seeded_draw_stops_the_freeze(study_dir, capsys, tampered, why):
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    adjudicate(study_dir, drawn_sample(study_dir)["trials"])
+    path = study_dir / "adjudication" / "reference" / "sample.json"
+    drawn = json.loads(path.read_text())
+    tampered(drawn)
+    path.write_text(json.dumps(drawn))
+    capsys.readouterr()
+    assert run(study_dir, "freeze") == 1 and why in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("recheck, why", [
+    ("NCT0031,yes,2025-06-01,met,OS,0.7,2025-06-01,high", "traced or re-checked differently"),       # only the date differs
+    ("NCT0031,yes,2025-03-01,met,OS,0.5,2025-03-01,high", "traced or re-checked differently"),       # only the hazard ratio
+])
+def test_any_change_to_a_trace_after_the_draw_stops_the_freeze(study_dir, capsys, recheck, why):
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    adjudicate(study_dir, drawn_sample(study_dir)["trials"])
+    (study_dir / "data" / "readout_trace" / "rechecks_2.csv").write_text(HEADER + recheck + "\n")
+    capsys.readouterr()
+    assert run(study_dir, "freeze") == 1 and f"1 trial has been {why}" in capsys.readouterr().out.replace("have been", "has been")
+
+
+def test_a_trial_in_doubt_cannot_be_re_checked_away_after_the_draw(study_dir, capsys):
+    trace(study_dir / "data" / "readout_trace", ["NCT0030,yes,2025-03-01,mixed,OS,,,high"], name="rechecks.csv")
+    run(study_dir, "sample")
+    adjudicate(study_dir, drawn_sample(study_dir)["trials"])
+    # Only the adjudicators settle a trial left in doubt. A re-check that now says it never read out is not theirs.
+    trace(study_dir / "data" / "readout_trace", ["NCT0030,no,,,,,,high"], name="rechecks.csv")
+    capsys.readouterr()
+    assert run(study_dir, "freeze") == 1
+    assert "traced or re-checked differently since the sample was drawn" in capsys.readouterr().out
+
+
+def test_a_design_ruling_on_a_traced_trial_after_the_draw_stops_the_freeze_and_says_so(study_dir, capsys):
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    sampled = drawn_sample(study_dir)["trials"]
+    adjudicate(study_dir, sampled)
+    unsampled = next(f"NCT{i:04d}" for i in range(1, 55) if f"NCT{i:04d}" not in sampled)
+    records.append(study_dir / "screening" / "design_reviews.jsonl",
+                   DesignReview(unsampled, "exclude", "a non-inferiority design", "Study Lead", TODAY))
+    capsys.readouterr()
+    assert run(study_dir, "freeze") == 1
+    assert f"a design ruling was made after the sample was drawn on 2026-10-09 for 1 trial: {unsampled}" in capsys.readouterr().out
+
+
+def test_a_design_ruling_on_a_trial_with_no_readout_does_not_touch_the_reference_figures(study_dir, capsys):
+    traces = study_dir / "data" / "readout_trace" / "trace_A.csv"
+    traces.write_text(traces.read_text().replace("NCT0054,yes,2025-03-01,not_met,OS,0.7,2025-03-01,high", "NCT0054,no,,,,,,high"))
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    adjudicate(study_dir, drawn_sample(study_dir)["trials"])
+    # NCT0054 has not read out, so it may yet be sealed; it is later found to be a non-inferiority design and excluded.
+    records.append(study_dir / "screening" / "design_reviews.jsonl",
+                   DesignReview("NCT0054", "exclude", "a non-inferiority design", "Study Lead", TODAY))
+    assert run(study_dir, "freeze") == 0
+
+
+def test_the_reference_set_keeps_to_the_registry_snapshot_it_was_drawn_on(study_dir, capsys):
+    recheck_the_doubtful_trace(study_dir)
+    run(study_dir, "sample")
+    assert drawn_sample(study_dir)["snapshot"]["name"] == "2026-10-08T090005"
+    adjudicate(study_dir, drawn_sample(study_dir)["trials"])
+    # A later snapshot arrives in which the registry has reclassed every sponsor. The reference set does not move.
+    newer = study_dir / "snapshots" / "2026-11-01T090005"
+    newer.mkdir()
+    with gzip.open(newer / "studies.jsonl.gz", "wt", encoding="utf-8") as f:
+        for i in range(1, 55):
+            f.write(json.dumps(study(f"NCT{i:04d}", "Overall survival", pcd="2025-03", cls="OTHER")) + "\n")
+    (newer / "manifest.json").write_text("{}")
+    assert run(study_dir, "freeze") == 0
+    figures = json.loads((study_dir / "study" / "base_rates.json").read_text())
+    assert figures["snapshot"]["name"] == "2026-10-08T090005" and "industry/overall_survival" in figures["base_rates"]
+    assert base_rate_forecaster(study_dir).version == "frozen 2026-10-09"
+    # And the snapshot it was drawn on must still be what it was.
+    with gzip.open(study_dir / "snapshots" / "2026-10-08T090005" / "studies.jsonl.gz", "wt", encoding="utf-8") as f:
+        f.write(json.dumps(study("NCT0001", "Overall survival")) + "\n")
+    assert run(study_dir, "report") == 1 and "is not the snapshot the sample was drawn on" in capsys.readouterr().out
 
 
 def test_entries_dated_after_today_stop_the_reference_command(study_dir, capsys):

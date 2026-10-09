@@ -690,15 +690,15 @@ def test_a_list_of_disagreements_is_settled_once_and_against_the_readings_it_sho
     capsys.readouterr()
     assert run(study_dir, "reconcile", by=BOTH) == 1
     assert "row 3 (NCT0001): the same source is settled twice in this file" in capsys.readouterr().out
-    # A list with settlements not yet recorded is not written over.
+    # A settlement typed and not yet recorded is kept when the list is written again.
     fill(disagreements, {"NCT0001": [SETTLED]})
     rows = rows_of(disagreements)
     with disagreements.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerow(rows[0])
-    assert run(study_dir, "disagreements") == 1
-    assert "holds 1 reconciliation not yet recorded; run reconcile, or delete the file" in capsys.readouterr().out
+    assert run(study_dir, "disagreements") == 0
+    assert rows_of(disagreements)[0]["reason"] == SETTLED["reason"]
     # One of them then changes their reading. What the list shows is no longer what would be settled.
     run(study_dir, "form", "--reread", "NCT0001")
     fill(form_of(study_dir), {"NCT0001": met(hazard_ratio="0.75")})
@@ -727,20 +727,88 @@ def test_a_typed_settlement_is_not_written_over_when_its_trial_gains_a_source(st
     fill(disagreements, {"NCT0001": SETTLED})
     reads(study_dir, {"NCT0003": met(nct="NCT0001", source_type="paper_or_regulator", source="https://example.test/paper")})
     capsys.readouterr()
-    assert run(study_dir, "disagreements") == 1
-    assert "holds 1 reconciliation not yet recorded" in capsys.readouterr().out
+    # The trial is now held back for the paper, but this source was laid open before and its settlement still fits.
+    assert run(study_dir, "disagreements") == 0
+    row, = rows_of(disagreements)
+    assert (row["source"], row["reason"]) == (TOPLINE, SETTLED["reason"])
     assert run(study_dir, "reconcile", by=BOTH) == 0 and len(log_of(study_dir).reconciliations) == 1
 
 
-def test_a_reconciled_source_listed_again_with_something_else_is_refused(study_dir, capsys):
+def test_a_slip_in_a_reconciliation_is_put_right_on_purpose_and_both_stay_in_the_log(study_dir, capsys):
     disagreements = a_disagreement(study_dir)
-    fill(disagreements, {"NCT0001": SETTLED})
+    fill(disagreements, {"NCT0001": {**SETTLED, "settled_hazard_ratio": "0.27"}})          # 0.72 was meant
     run(study_dir, "reconcile", by=BOTH)
-    fill(disagreements, {"NCT0001": {"settled_hazard_ratio": "0.78", "reason": "on reflection"}})
+    assert results(log_of(study_dir), TODAY)["NCT0001"].hazard_ratio == 0.27
+    # The list no longer shows the source. They ask for its trial again and settle it as it should have been.
+    assert run(study_dir, "disagreements", today=TOMORROW) == 0 and rows_of(disagreements) == []
+    assert run(study_dir, "disagreements", "--reread", "NCT0001", today=TOMORROW) == 0
+    fill(disagreements, {"NCT0001": {**SETTLED, "reason": "0.27 was a slip for 0.72"}})
     capsys.readouterr()
-    assert run(study_dir, "reconcile", by=BOTH) == 1
-    assert "not one the two adjudicators have read differently and not yet reconciled" in capsys.readouterr().out
-    assert len(log_of(study_dir).reconciliations) == 1
+    assert run(study_dir, "reconcile", by=BOTH, today=TOMORROW) == 1
+    assert "this source was reconciled on 2026-10-12; reconcile with --revise to replace that" in capsys.readouterr().out
+    assert run(study_dir, "reconcile", "--revise", by=BOTH, today=TOMORROW) == 0
+    assert [r.hazard_ratio for r in log_of(study_dir).reconciliations] == [0.27, 0.72]
+    assert results(log_of(study_dir), TOMORROW)["NCT0001"].hazard_ratio == 0.72
+
+
+def test_a_list_with_one_settlement_that_still_fits_and_one_that_does_not_keeps_the_one_and_says_so(study_dir, capsys):
+    reads(study_dir, {"NCT0001": met(hazard_ratio="0.72"), "NCT0002": met(source="https://example.test/y", hazard_ratio="0.5")})
+    reads(study_dir, {"NCT0001": met(hazard_ratio="0.78"), "NCT0002": met(source="https://example.test/y", hazard_ratio="0.6")},
+          by=BEN)
+    run(study_dir, "disagreements")
+    disagreements = working(study_dir, "disagreements.csv")
+    second = {**SETTLED, "settled_hazard_ratio": "0.5", "settled_hazard_ratio_endpoint": "Progression-free survival (PFS)"}
+    fill(disagreements, {"NCT0001": SETTLED, "NCT0002": second})
+    # Before they record it, Ben changes his reading of the first source.
+    run(study_dir, "form", "--reread", "NCT0001", by=BEN)
+    fill(form_of(study_dir, "ben-second"), {("NCT0001", TOPLINE): met(hazard_ratio="0.75")})
+    assert run(study_dir, "record", "--revise", by=BEN) == 0
+    capsys.readouterr()
+    assert run(study_dir, "reconcile", by=BOTH) == 1 and log_of(study_dir).reconciliations == ()
+    assert run(study_dir, "disagreements") == 0
+    assert f"1 settlement typed in the old list no longer fit the readings and were dropped: NCT0001 ({TOPLINE})" in capsys.readouterr().out
+    first, kept = rows_of(disagreements)
+    assert (first["settled_outcome"], kept["nct"], kept["settled_hazard_ratio"], kept["reason"]) == ("", "NCT0002", "0.5", SETTLED["reason"])
+    assert run(study_dir, "reconcile", by=BOTH) == 0 and [r.nct for r in log_of(study_dir).reconciliations] == ["NCT0002"]
+
+
+def test_a_paper_is_one_source_however_its_doi_is_written(study_dir, capsys):
+    reads(study_dir, {"NCT0001": met(source_type="paper_or_regulator", source="https://doi.org/10.1056/NEJMoa1")})
+    capsys.readouterr()
+    for written in ("https://www.doi.org/10.1056/NEJMoa1", "https://doi.org/10.1056/nejmoa1/", "doi: 10.1056/NEJMoa1",
+                    "10.1056/NEJMoa1", "https://dx.doi.org/10.1056/NEJMoa1#abstract"):
+        assert reads(study_dir, {"NCT0002": met(nct="NCT0001", source_type="paper_or_regulator", source=written)}, by=BEN) == 1
+        assert "this looks like the source already cited as paper_or_regulator" in capsys.readouterr().out
+
+
+def test_a_source_first_cited_after_the_two_have_differed_is_reconciled_even_when_read_alike(study_dir, capsys):
+    reads(study_dir, {"NCT0001": met()})
+    reads(study_dir, {"NCT0001": {"nothing_found": "a safety review only"}}, by=BEN)
+    run(study_dir, "withdraw", "--trial", "NCT0001", "--source", TOPLINE, "--reason", "Ben is right")
+    abstract = met(source_type="conference", source="https://example.test/abstract")
+    # The same day a new source for the trial is refused: the log could not tell whether it came before they talked.
+    assert reads(study_dir, {"NCT0001": abstract}, by=BEN) == 1
+    assert "a source of this trial was first read differently today; a new source for it can be recorded from tomorrow" in capsys.readouterr().out
+    assert reads(study_dir, {"NCT0001": abstract}, by=BEN, today=TOMORROW) == 0
+    assert reads(study_dir, {"NCT0001": abstract}, today=TOMORROW) == 0
+    assert results(log_of(study_dir), TOMORROW) == {}                             # read alike, but not independently
+    assert run(study_dir, "status", today=TOMORROW) == 0 and "NCT0001  read differently" in capsys.readouterr().out
+    assert run(study_dir, "disagreements", today=TOMORROW) == 0
+    fill(working(study_dir, "disagreements.csv"), {"NCT0001": {**SETTLED, "settled_hazard_ratio": "", "settled_hazard_ratio_endpoint": "",
+                                                              "reason": "both read the abstract after talking about the release"}})
+    assert run(study_dir, "reconcile", by=BOTH, today=TOMORROW) == 0
+    assert results(log_of(study_dir), TOMORROW)["NCT0001"].outcome == "positive"
+
+
+def test_a_dissent_dated_after_today_stops_the_command_and_one_for_a_trial_off_the_worklist_is_shown(study_dir, capsys):
+    reads(study_dir, {"NCT0001": met()})
+    reads(study_dir, {"NCT0001": {"nothing_found": "a safety review only"}}, by=BEN, today=TOMORROW)
+    capsys.readouterr()
+    assert run(study_dir, "status") == 1 and "the log holds an entry dated 2026-10-13" in capsys.readouterr().out
+    worklist = study_dir / "adjudication" / "reference" / "worklist.csv"
+    worklist.write_text(worklist.read_text().replace("NCT0001,ALPHA,A Study of X,Overall survival\n", ""))
+    assert run(study_dir, "status", today=TOMORROW) == 0
+    assert "NCT0001  read differently  (no longer on the worklist)" in capsys.readouterr().out
 
 
 def test_a_trial_is_held_back_whichever_of_them_has_the_source_still_to_read(study_dir, capsys):

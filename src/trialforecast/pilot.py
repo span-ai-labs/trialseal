@@ -560,7 +560,10 @@ def report(pilots: Iterable[ModelPilot], trials: Iterable[PastTrial], agreement:
                   f"{counted(agreement['sources'], 'source')} (Cohen's kappa {kappa}), on the date of disclosure for "
                   f"{agreement['disclosure_date_agreed']}, and on the hazard ratio for {agreement['hazard_ratio_agreed']} "
                   f"of the {agreement['hazard_ratio_compared']} where either recorded one. "
-                  f"{counted(agreement['not_read_by_two'], 'source')} had not been read by exactly two people.", ""]
+                  f"{counted(agreement['not_read_by_two'], 'source')} had not been read by exactly two people. Counted apart, "
+                  f"as not read independently: {agreement['one_found_no_result_stated']} that one of them found not to state "
+                  f"the result, and {agreement['read_after_the_two_had_talked']} first read while they differed on another "
+                  f"source of the trial.", ""]
 
     sizes = []
     for pilot in pilots:

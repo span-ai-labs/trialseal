@@ -108,3 +108,14 @@
 **2026-10-09, the adjudicators can now record.** `trialseal-adjudicate --set reference` is built (see ticket 05). A sampled trial for which both adjudicators search and find nothing is settled as such: it counts against the trace in the nine-in-ten check where the trace had a result, and as agreement where the trace had the trial ended without analysis. A trial in doubt is settled the same way when neither finds a source that states its result. Once `study/base_rates.json` exists the reference log takes no more entries.
 
 **2026-10-09, after the third review.** `adjudication/reference/sample.json` now carries a mark of how each of the 213 trials it was drawn from was traced. I added the marks to the draw already made, after checking that the reference set and the 40 sampled trials are exactly what the draw recorded; the draw itself is unchanged. From here a re-check of any of those trials stops the freeze. If the adjudicators and the trace match on fewer than nine in ten, `trialseal-reference sample` lists every traced trial for them.
+
+**2026-10-09, after the fourth review.** The freeze was the weakest part. Fixed with a failing test first:
+
+- The trace is judged on the 40 sampled trials only. Below nine in ten on those, every trial traced with a result must be settled before the freeze; reading a few more that agree no longer gets round it.
+- The sample is not drawn again once the reference log holds any entry, so deleting `sample.json` cannot refresh the marks of a changed trace.
+- The freeze checks that the sample file is the seeded draw of 40 from the trials it names.
+- The draw records the registry snapshot, and the reference set keeps to it: a later snapshot that reclasses a sponsor no longer moves it. It also records the trials in doubt, a mark for every traced trial, and where each one's design stood. After the draw, a trace, a re-check or a design ruling that changes a trial with a result or in doubt stops the freeze, saying which it was. A design ruling on a trial with no readout does not, since such a trial is in no figure and may yet be sealed.
+
+`adjudication/reference/sample.json` was brought to this form in place, after checking that nothing has been adjudicated, that the reference set and the 40 are what the draw recorded, and that no trace mark has changed. The draw is unchanged; the snapshot recorded is `2026-10-08T090005`.
+
+**Designs the tracers flagged.** I checked the 18 traced trials the tracers' notes flag for their design. Fourteen have no readout and are in no figure; two are in doubt and go to the adjudicators (the STAMPEDE platform and BIG-1); two count as negative results (NCT04504825 and NCT04512235, flagged for a win-ratio endpoint, which is not a ground for exclusion under ADR-0012). None is excluded, and the reference set stands as drawn.

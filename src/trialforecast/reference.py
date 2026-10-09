@@ -264,11 +264,19 @@ def base_rate_forecaster(root: pathlib.Path) -> BaseRateForecaster:
                               version=f"frozen {figures['frozen_on']}")
 
 
-def _traced_as(trials: Iterable[ReferenceTrial], ncts: Iterable[str]) -> dict[str, str]:
-    """A mark of how each of these trials was traced, to tell later whether its trace has changed. It gives nothing away."""
-    wanted = set(ncts)
+def _traced_as(trials: Iterable[ReferenceTrial]) -> dict[str, str]:
+    """A mark of how each trial was traced, to tell later whether its trace has changed. It gives nothing away."""
     return {t.nct: hashlib.sha256(f"{t.nct}|{t.place}|{t.readout_date}|{t.hazard_ratio}".encode()).hexdigest()[:12]
-            for t in trials if t.nct in wanted}
+            for t in trials}
+
+
+def _design_as(trials: Iterable[ReferenceTrial]) -> dict[str, str]:
+    """Where each trial's design stood: ruled out, awaiting a ruling, or in."""
+    return {t.nct: t.place if t.place in (EXCLUDED_DESIGN, AWAITING_DESIGN_REVIEW) else "in" for t in trials}
+
+
+def _snapshot_mark(snapshot: pathlib.Path) -> dict[str, str]:
+    return {"name": snapshot.name, "sha256": hashlib.sha256((snapshot / "studies.jsonl.gz").read_bytes()).hexdigest()}
 
 
 def _to_read(trials: Iterable[ReferenceTrial]) -> list[str]:
@@ -276,10 +284,13 @@ def _to_read(trials: Iterable[ReferenceTrial]) -> list[str]:
     return sorted(t.nct for t in trials if t.clear or t.place == VOID)
 
 
+def _draw(pool: list[str], size: int = SAMPLE_SIZE) -> list[str]:
+    return sorted(random.Random(SAMPLE_SEED).sample(pool, min(size, len(pool))))
+
+
 def adjudication_sample(trials: Iterable[ReferenceTrial], size: int = SAMPLE_SIZE) -> list[str]:
     """The random sample both adjudicators read: one draw from the trials traced as read out or as void."""
-    to_read = _to_read(trials)
-    return sorted(random.Random(SAMPLE_SEED).sample(to_read, min(size, len(to_read))))
+    return _draw(_to_read(trials), size)
 
 
 def trace_accuracy(
@@ -320,10 +331,21 @@ class _Study:
     adjudicated: dict[str, TrialResult]
     no_result_found: set[str]  # trials both adjudicators searched for and found nothing
     agreement: dict
+    snapshot: dict[str, str]  # the registry snapshot the trials' reference classes are taken from
+    begun: bool  # whether the adjudicators have recorded anything
 
 
 def _load(root: pathlib.Path, today: dt.date) -> _Study:
-    candidates = registry_records(latest_snapshot(root))
+    # Once the sample is drawn the reference set keeps to the registry snapshot it was drawn on: a later snapshot
+    # can reclass a sponsor or reword an endpoint, and the set the adjudicators are checking would shift under them.
+    drawn = _drawn(root)
+    if drawn is not None and "snapshot" in drawn:
+        snapshot = root / "snapshots" / drawn["snapshot"]["name"]
+        if not (snapshot / "studies.jsonl.gz").exists() or _snapshot_mark(snapshot) != drawn["snapshot"]:
+            raise ValueError(f"{snapshot} is not the snapshot the sample was drawn on: it is gone or has changed")
+    else:
+        snapshot = latest_snapshot(root)
+    candidates = registry_records(snapshot)
     trace_files = sorted((root / TRACES).glob("trace_*.csv"))
     sources = dict(trace_files=trace_files, candidates=candidates, rechecks=sorted((root / TRACES).glob("rechecks*.csv")),
                    design_reviews=read_records(root / DESIGN_REVIEWS, DesignReview))
@@ -334,7 +356,8 @@ def _load(root: pathlib.Path, today: dt.date) -> _Study:
     return _Study(root, today, candidates, reference_trials(**sources),
                   reference_trials(**sources, adjudicated=adjudicated, awaiting_adjudication=awaiting_result(log, today),
                                    as_of=today, no_result_found=nothing_found),
-                  adjudicated, nothing_found, adjudicator_agreement(log))
+                  adjudicated, nothing_found, adjudicator_agreement(log), _snapshot_mark(snapshot),
+                  bool(findings or any(log.sizes())))
 
 
 def _share(value: float | None) -> str:
@@ -371,14 +394,17 @@ def _report_text(study: _Study) -> str:
         lines.append(f"| {row['reference_class']} | {row['trials']} | {cells} |")
     agreement, accuracy = study.agreement, trace_accuracy(study.traced, study.adjudicated, study.no_result_found)
     lines += ["", "## Adjudication", ""]
-    if not agreement["sources"] and not accuracy["trials"]:
+    if not (agreement["sources"] or accuracy["trials"] or agreement["one_found_no_result_stated"]
+            or agreement["read_after_the_two_had_talked"]):
         lines += ["The adjudicators have not yet read their sample, so neither their agreement nor the accuracy of the "
                   "trace is measured."]
     else:
         kappa = "not defined" if agreement["kappa"] is None else f"{agreement['kappa']:.2f}"
         lines += [f"The adjudicators' first readings agreed on the outcome for {agreement['outcome_agreed']} of "
                   f"{counted(agreement['sources'], 'source')} (Cohen's kappa {kappa}) and on the date of disclosure for "
-                  f"{agreement['disclosure_date_agreed']}.",
+                  f"{agreement['disclosure_date_agreed']}. Counted apart, as not read independently: "
+                  f"{counted(agreement['one_found_no_result_stated'], 'source')} one of them found not to state the result, and "
+                  f"{agreement['read_after_the_two_had_talked']} first read while they differed on another source of the trial.",
                   f"Of {counted(accuracy['trials'], 'trial')} both traced and adjudicated, the trace had the outcome right "
                   f"for {accuracy['outcome_matched']} and the readout date within a week for {accuracy['date_within_a_week']}; "
                   f"it dated {accuracy['date_later_than_adjudicated']} later than the adjudicators did. For "
@@ -412,36 +438,48 @@ def _settled(study: _Study, nct: str) -> bool:
     return nct in study.adjudicated or nct in study.no_result_found
 
 
-def _trace_borne_out(accuracy: dict) -> bool:
-    return not accuracy["trials"] or accuracy["outcome_matched"] >= TRACE_ACCURACY_NEEDED * accuracy["trials"]
+def _sample_bears_the_trace_out(study: _Study, sampled: Iterable[str]) -> tuple[bool, dict]:
+    """Whether the trace matched the adjudicators on enough of the sampled trials, and the counts.
+
+    It is the sample that judges the trace. Trials read beyond it were not drawn
+    at random, so they do not count for or against it.
+    """
+    sampled = set(sampled)
+    accuracy = trace_accuracy([t for t in study.traced if t.nct in sampled], study.adjudicated, study.no_result_found)
+    return accuracy["outcome_matched"] >= TRACE_ACCURACY_NEEDED * accuracy["trials"], accuracy
 
 
 def sample(study: _Study) -> int:
     """Draw the adjudicators' sample, once, and list it for them with nothing of what the trace found.
 
-    It is drawn only when no trace still awaits a re-check, and it records the
-    trials it was drawn from and a mark of how each was traced, so that neither a
-    sample of an earlier, smaller set nor a trace changed afterwards can later
-    stand for what was drawn. The list the adjudicators are given also holds the
-    trials the trace left in doubt, which only they can settle; it does not say
-    which those are. If they have settled the sample and the trace did not match
-    them often enough, the list becomes every traced trial with a result.
+    It is drawn only when no trace still awaits a re-check and before the
+    adjudicators have recorded anything. It records the registry snapshot, the
+    trials it was drawn from, and a mark of how every traced trial was traced and
+    where its design stood, so that nothing changed afterwards can stand for what
+    was drawn. The list the adjudicators are given also holds the trials the
+    trace left in doubt, which only they can settle; it does not say which those
+    are. If they have settled the sample and the trace did not match them often
+    enough, the list becomes every traced trial with a result.
     """
     drawn = _drawn(study.root)
     if drawn is None:
         waiting = sum(t.place == AWAITING_RECHECK for t in study.traced)
         if waiting:
             raise ValueError(f"{counted(waiting, 'trace')} still await a re-check; the sample is drawn once they are made")
+        if study.begun:
+            raise ValueError("the adjudicators have begun: the reference log holds entries, so a sample drawn now would "
+                             "not be one they read without knowing the trace would be judged on it")
         drawn_from = _to_read(study.traced)
-        drawn = {"drawn_on": study.today.isoformat(), "seed": SAMPLE_SEED, "trials": adjudication_sample(study.traced),
-                 "drawn_from": drawn_from, "traced_as": _traced_as(study.traced, drawn_from)}
+        drawn = {"drawn_on": study.today.isoformat(), "seed": SAMPLE_SEED, "trials": _draw(drawn_from), "drawn_from": drawn_from,
+                 "in_doubt": sorted(t.nct for t in study.traced if t.place == IN_DOUBT), "snapshot": study.snapshot,
+                 "traced_as": _traced_as(study.traced), "design_as": _design_as(study.traced)}
         (study.root / SAMPLE).parent.mkdir(parents=True, exist_ok=True)
         (study.root / SAMPLE).write_text(json.dumps(drawn, indent=2) + "\n", encoding="utf-8")
     to_read = {*drawn["trials"], *(t.nct for t in study.traced if t.place == IN_DOUBT)}
-    accuracy = trace_accuracy(study.traced, study.adjudicated, study.no_result_found)
-    if all(_settled(study, nct) for nct in drawn["trials"]) and not _trace_borne_out(accuracy):
+    borne_out, accuracy = _sample_bears_the_trace_out(study, drawn["trials"])
+    if all(_settled(study, nct) for nct in drawn["trials"]) and not borne_out:
         to_read |= set(_to_read(study.traced))
-        print(f"the trace matched the adjudicators on only {accuracy['outcome_matched']} of {accuracy['trials']}, "
+        print(f"the trace matched the adjudicators on only {accuracy['outcome_matched']} of the {accuracy['trials']} sampled, "
               f"so every traced trial is listed for them to read")
     worklist = study.root / REFERENCE_WORKLIST
     write_table(worklist, ("nct", "acronym", "title", "scored_endpoint"),
@@ -452,48 +490,73 @@ def sample(study: _Study) -> int:
     return 0
 
 
+def _require_as_drawn(study: _Study, drawn: dict) -> None:
+    """The reference set must be what the sample was drawn from: the same draw, traces and design rulings.
+
+    The trace is judged as it stood when the sample was drawn. A trace changed
+    since, to match the adjudicators or for any other reason, is not the trace
+    they checked; nor is a set from which a design ruling has since removed a
+    trial they contradicted the trace on.
+    """
+    when = f"the sample was drawn on {drawn['drawn_on']}"
+    if drawn.get("seed") != SAMPLE_SEED or _draw(list(drawn["drawn_from"])) != drawn["trials"]:
+        raise NotFrozen(f"{study.root / SAMPLE} is not the draw of {SAMPLE_SIZE} from the trials it names")
+    as_drawn, design_then = drawn.get("traced_as", {}), drawn.get("design_as", {})
+    as_now, design_now = _traced_as(study.traced), _design_as(study.traced)
+    joined = sorted(set(as_now) - set(as_drawn))
+    if joined:
+        raise NotFrozen(f"{counted(len(joined), 'trial')} joined the reference set after {when}, so the sample no longer "
+                        f"speaks for it: {', '.join(joined[:10])}")
+    # A trial with a result, or left in doubt, is part of what the adjudicators are checking. One with no readout is
+    # not counted in any figure and may yet be sealed, so a ruling that later excludes its design is no concern here.
+    checked = {*drawn["drawn_from"], *drawn.get("in_doubt", ())}
+    ruled = sorted(nct for nct in checked if design_now.get(nct) != design_then.get(nct))
+    if ruled:
+        raise NotFrozen(f"a design ruling was made after {when} for {counted(len(ruled), 'trial')}: {', '.join(ruled[:10])}; "
+                        f"the reference set is the one that was drawn from")
+    retraced = sorted(nct for nct in as_drawn
+                      if as_now.get(nct) != as_drawn[nct] and (nct in checked or design_now.get(nct) != EXCLUDED_DESIGN))
+    if retraced:
+        raise NotFrozen(f"{counted(len(retraced), 'trial')} have been traced or re-checked differently since {when}: "
+                        f"{', '.join(retraced[:10])}")
+
+
 def freeze(study: _Study) -> int:
     """Fix the figures the base-rate forecaster will use, once, and only when they are fit to be fixed.
 
-    Nothing may still be waiting to be counted. The sample must have been drawn
-    from the trials now in the reference set, traced as they were at the draw,
-    and the adjudicators must have settled every sampled trial. And their
-    readings must bear the trace out: if they contradict it too often, the traces
-    they did not read cannot be relied on, and they read them all. The file
-    records what it was made from.
+    The reference set must be what the sample was drawn from. Nothing may still
+    be waiting to be counted, and the adjudicators must have settled every
+    sampled trial. Their readings of the sample must bear the trace out: if they
+    contradict it too often, the traces they did not read cannot be relied on,
+    and they read every traced trial with a result before anything is fixed. The
+    file records what it was made from.
     """
     frozen, drawn = study.root / FROZEN, _drawn(study.root)
-    waiting = [t.nct for t in study.trials if t.place in NOT_YET_COUNTED]
     if frozen.exists():
         raise NotFrozen(f"the base rates are already frozen in {frozen}")
+    if drawn is not None:
+        _require_as_drawn(study, drawn)
+    waiting = [t.nct for t in study.trials if t.place in NOT_YET_COUNTED]
     if waiting:
         raise NotFrozen(f"{counted(len(waiting), 'trial')} are not yet counted (in doubt, awaiting a re-check or a design "
                         f"ruling): {', '.join(waiting[:10])}{' and more' if len(waiting) > 10 else ''}")
     if drawn is None:
         raise NotFrozen("the adjudicators' sample has not been drawn")
-    now = set(_to_read(study.traced))
-    joined = sorted(now - set(drawn["drawn_from"]))
-    if joined:
-        raise NotFrozen(f"{counted(len(joined), 'trial')} joined the reference set after the sample was drawn on "
-                        f"{drawn['drawn_on']}, so the sample no longer speaks for it: {', '.join(joined[:10])}")
-    # The trace is judged as it stood when the sample was drawn. One changed since, to match the adjudicators or
-    # for any other reason, is not the trace they checked.
-    as_drawn, as_now = drawn.get("traced_as", {}), _traced_as(study.traced, drawn["drawn_from"])
-    retraced = sorted(nct for nct in drawn["drawn_from"] if as_drawn.get(nct) != as_now.get(nct))
-    if retraced:
-        raise NotFrozen(f"{counted(len(retraced), 'trial')} have been traced or re-checked differently since the sample "
-                        f"was drawn on {drawn['drawn_on']}: {', '.join(retraced[:10])}")
     unread = [nct for nct in drawn["trials"] if not _settled(study, nct)]
     if unread:
         raise NotFrozen(f"the adjudicators have not settled {len(unread)} of the {len(drawn['trials'])} trials in their sample")
-    accuracy = trace_accuracy(study.traced, study.adjudicated, study.no_result_found)
-    if not _trace_borne_out(accuracy) and not all(_settled(study, nct) for nct in now):
-        raise NotFrozen(f"the trace had the outcome right for only {accuracy['outcome_matched']} of the {accuracy['trials']} "
-                        f"trials the adjudicators read, so the traces they did not read cannot be relied on; "
-                        f"`trialseal-reference sample` now lists every traced trial for them")
+    borne_out, of_the_sample = _sample_bears_the_trace_out(study, drawn["trials"])
+    everything = _to_read(study.traced)
+    unread = [nct for nct in everything if not _settled(study, nct)]
+    if not borne_out and unread:
+        raise NotFrozen(f"the trace had the outcome right for only {of_the_sample['outcome_matched']} of the "
+                        f"{of_the_sample['trials']} sampled trials, so the traces the adjudicators did not read cannot be relied "
+                        f"on. They have not settled {len(unread)} of the {len(everything)} trials now listed by "
+                        f"`trialseal-reference sample`")
     figures = frozen_base_rates(study.trials, study.today)
-    figures.update(made_from=_made_from(study.root), adjudicated=sum(t.adjudicated for t in study.trials),
-                   trace_accuracy=accuracy)
+    figures.update(made_from=_made_from(study.root), snapshot=study.snapshot, adjudicated=sum(t.adjudicated for t in study.trials),
+                   trace_accuracy=trace_accuracy(study.traced, study.adjudicated, study.no_result_found),
+                   trace_accuracy_on_the_sample=of_the_sample)
     frozen.parent.mkdir(parents=True, exist_ok=True)
     frozen.write_text(json.dumps(figures, indent=2) + "\n", encoding="utf-8")
     print(f"base rates frozen in {frozen}")
