@@ -53,3 +53,5 @@
 **2026-10-09, second review.** A second adversarial pass found the first round closed and a narrower set, fixed with tests: confirming a queue row now matches the whole row, not the trial alone; a report that a trial read out cannot be overruled while another such report for the same trial is unmarked; a search dated in the future or more than 14 days back is refused on import; the drug correction comes from the latest search that stands; a waiting record for a trial no longer in the snapshot still shows in the queue.
 
 **Known limits.** `build_batch` takes design rulings as an argument and defaults to none; sealing is the gate that always has them. `exclusion_review` was added to the sealed line for a trial, so a batch sealed before today would not read back; none has been sealed.
+
+**2026-10-09, decided on the study lead's behalf.** NCT07609901 and NCT06950385, trials in people who do not have cancer, are excluded (`screening/design_rulings_2026-10-09c.csv`). The rule this sets: the study is of treatment trials in people with cancer; a prevention trial is excluded by design ruling.

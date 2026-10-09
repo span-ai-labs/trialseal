@@ -93,3 +93,5 @@ And in the command: one source cannot enter under two spellings of its address o
 - A trial that has left its worklist and is not in the latest registry snapshot is shown with no title or scored endpoint.
 - The pilot scores a trial the two have read differently on the trace until they settle it; the reference set holds such a trial in doubt.
 - Three passes of review have each found about a dozen or more real problems here. This is the code that guards blindness and it should be read again before the first reveal.
+
+**2026-10-09, decided.** The study lead said to take the open decisions on his behalf. Rules 1 to 7 above stand, including rule 5: a source both adjudicators withdraw, each with a reason, no longer counts for the trial. `study/adjudicators.json` now names both adjudicators.

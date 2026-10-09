@@ -7,10 +7,10 @@ As of 2026-10-09: 2425 candidates in the latest registry snapshot.
 | Eligible | 14 |
 | Already read out | 271 |
 | Void | 8 |
-| Excluded design | 11 |
+| Excluded design | 13 |
 | Awaiting confirmation | 218 |
 | Awaiting design review | 1 |
-| Not screened | 1902 |
+| Not screened | 1900 |
 
 218 decisions and 121 designs wait for the study lead.
 
